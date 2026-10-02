@@ -104,11 +104,21 @@ class ReviewDetailView(APIView):
         return Response(serializer.data,status=status.HTTP_200_OK)
 
 
-# GET /api/reviews/reviewer/{reviewerId}/
-#Devuelve todas las revisiones publicadas de un revisor
+# GET /api/reviews/reviewer/{reviewerId}/?conference_id=<int>
+# Devuelve todas las revisiones publicadas de un revisor.
+# Con conference_id, solo las de esa conferencia.
 class ReviewsByReviewerIdView(APIView):
     def get(self, request, reviewerId):
+        try:
+            conference_id = _entero_opcional(request.query_params.get("conference_id"), "conference_id")
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+ 
         reviews = Review.objects.filter(reviewer_id=reviewerId, is_published=True)
+        if conference_id is not None:
+            reviews = reviews.filter(article__session__conference_id=conference_id)
+ 
+        # Se mantiene el 404 sin resultados: el front lo trata como lista vacía.
         if not reviews.exists():
             return Response(
                 {"message": "No se encontraron revisiones para este revisor"},
@@ -116,7 +126,8 @@ class ReviewsByReviewerIdView(APIView):
             )
         serializer = ReviewSerializer(reviews, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-   
+
+
 # GET /api/reviews/{idReview}/versions/
 #Devuelve todas las versiones de una revisión
 class ReviewVersionsView(APIView):
