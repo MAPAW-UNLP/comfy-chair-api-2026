@@ -110,3 +110,70 @@ class BiddingNotificacionTests(BidTestCase):
     def test_un_400_no_notifica(self):
         self.postear("interested")
         self.assertEqual(self.notificaciones(), [])
+
+
+class BidPropiedadTests(BidTestCase):
+    def setUp(self):
+        super().setUp()
+        self.otro = self.crear_usuario("otro@test.com")
+
+    def test_post_a_nombre_de_otro_queda_a_nombre_propio(self):
+        respuesta = self.cliente(self.otro).post(
+            "/api/bidding/",
+            {"reviewer": self.revisor.id, "article": self.articulo.id, "choice": "Interesado"},
+            format="json",
+        )
+        self.assertEqual(respuesta.status_code, 201)
+        self.assertEqual(respuesta.data["reviewer"], self.otro.id)
+        self.assertEqual(Bid.objects.get().reviewer, self.otro)
+
+    def test_post_sin_reviewer_usa_el_del_token(self):
+        respuesta = self.cliente(self.revisor).post(
+            "/api/bidding/", {"article": self.articulo.id, "choice": "Quizás"}, format="json"
+        )
+        self.assertEqual(respuesta.status_code, 201)
+        self.assertEqual(Bid.objects.get().reviewer, self.revisor)
+
+    def test_put_sobre_bid_propio_responde_200(self):
+        bid = Bid.objects.create(reviewer=self.revisor, article=self.articulo, choice="Interesado")
+        respuesta = self.cliente(self.revisor).put(f"/api/bidding/{bid.id}/", {"choice": "Quizás"}, format="json")
+        self.assertEqual(respuesta.status_code, 200)
+        bid.refresh_from_db()
+        self.assertEqual(bid.choice, "Quizás")
+
+    def test_put_sobre_bid_ajeno_responde_403_y_no_lo_modifica(self):
+        bid = Bid.objects.create(reviewer=self.revisor, article=self.articulo, choice="Interesado")
+        respuesta = self.cliente(self.otro).put(f"/api/bidding/{bid.id}/", {"choice": "Quizás"}, format="json")
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(respuesta.json(), {"error": "No podés modificar un bid ajeno"})
+        bid.refresh_from_db()
+        self.assertEqual(bid.choice, "Interesado")
+
+    def test_put_sobre_bid_inexistente_responde_404(self):
+        respuesta = self.cliente(self.revisor).put("/api/bidding/999999/", {"choice": "Quizás"}, format="json")
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(respuesta.json(), {"error": "Bid no encontrado"})
+
+    def test_get_lista_solo_los_bids_propios(self):
+        propio = Bid.objects.create(reviewer=self.revisor, article=self.articulo, choice="Interesado")
+        Bid.objects.create(reviewer=self.otro, article=self.articulo, choice="Quizás")
+        respuesta = self.cliente(self.revisor).get("/api/bids/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual([b["id"] for b in respuesta.data], [propio.id])
+
+    def test_get_con_reviewer_id_propio_responde_200(self):
+        Bid.objects.create(reviewer=self.revisor, article=self.articulo, choice="Interesado")
+        respuesta = self.cliente(self.revisor).get("/api/bids/", {"reviewerId": self.revisor.id})
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(len(respuesta.data), 1)
+
+    def test_get_con_reviewer_id_ajeno_responde_403(self):
+        respuesta = self.cliente(self.otro).get("/api/bids/", {"reviewerId": self.revisor.id})
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(respuesta.json(), {"error": "No podés ver los bids de otro revisor"})
+
+    def test_sin_token_responde_401(self):
+        anonimo = APIClient()
+        self.assertEqual(anonimo.get("/api/bids/").status_code, 401)
+        self.assertEqual(anonimo.post("/api/bidding/", {}, format="json").status_code, 401)
+        self.assertEqual(anonimo.put("/api/bidding/1/", {}, format="json").status_code, 401)

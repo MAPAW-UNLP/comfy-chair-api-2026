@@ -16,6 +16,7 @@ class BidSerializer(serializers.ModelSerializer):
     class Meta:
         model = Bid
         fields = ['id', 'reviewer', 'article', 'choice']
+        read_only_fields = ['reviewer']
         validators = []
 
 

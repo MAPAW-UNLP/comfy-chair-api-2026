@@ -38,7 +38,7 @@ class BiddingView(APIView):
         if not serializer.is_valid():
             return Response({"error": "Opción de interés inválida"}, status=status.HTTP_400_BAD_REQUEST)
         bid, created = Bid.objects.update_or_create(
-            reviewer=serializer.validated_data["reviewer"],
+            reviewer_id=getattr(request, "user_id", None),
             article=serializer.validated_data["article"],
             defaults={"choice": serializer.validated_data["choice"]},
         )
@@ -52,7 +52,11 @@ class BiddingView(APIView):
 class BiddingUpdateView(APIView):
     def put(self, request, id):
         #Busca el bid con el id, si no lo encuentra retorna 404
-        bid = get_object_or_404(Bid, id=id)
+        bid = Bid.objects.filter(id=id).first()
+        if bid is None:
+            return Response({"error": "Bid no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+        if bid.reviewer_id != getattr(request, "user_id", None):
+            return Response({"error": "No podés modificar un bid ajeno"}, status=status.HTTP_403_FORBIDDEN)
         serializer = BidUpdateSerializer(bid, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -63,11 +67,11 @@ class BiddingUpdateView(APIView):
 # GET /api/bids?reviewerId=123
 class ReviewerBidsView(APIView):
     def get(self, request):
+        uid = getattr(request, "user_id", None)
         reviewer_id = request.GET.get('reviewerId')
-        if not reviewer_id:
-            return Response({"error": "reviewerId parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
-        #Se omite la verificacion del id, al no tener el modelo de User
-        bids = Bid.objects.filter(reviewer_id=reviewer_id)
+        if reviewer_id is not None and reviewer_id != str(uid):
+            return Response({"error": "No podés ver los bids de otro revisor"}, status=status.HTTP_403_FORBIDDEN)
+        bids = Bid.objects.filter(reviewer_id=uid)
         serializer = BidSerializer(bids, many=True)
         return Response(serializer.data)
 
