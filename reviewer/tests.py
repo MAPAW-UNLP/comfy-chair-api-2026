@@ -177,3 +177,49 @@ class BidPropiedadTests(BidTestCase):
         self.assertEqual(anonimo.get("/api/bids/").status_code, 401)
         self.assertEqual(anonimo.post("/api/bidding/", {}, format="json").status_code, 401)
         self.assertEqual(anonimo.put("/api/bidding/1/", {}, format="json").status_code, 401)
+
+
+class BidFiltrosTests(BidTestCase):
+    def setUp(self):
+        super().setUp()
+        self.sesion_a2 = self.crear_sesion(self.conferencia, "Sesión A2")
+        self.sesion_b1 = self.crear_sesion(self.crear_conferencia("Conferencia B"), "Sesión B1")
+        self.bid_a1 = Bid.objects.create(reviewer=self.revisor, article=self.articulo, choice="Interesado")
+        self.bid_a2 = Bid.objects.create(
+            reviewer=self.revisor, article=self.crear_articulo(self.sesion_a2), choice="Quizás"
+        )
+        self.bid_b1 = Bid.objects.create(
+            reviewer=self.revisor, article=self.crear_articulo(self.sesion_b1), choice="No Interesado"
+        )
+        Bid.objects.create(reviewer=self.crear_usuario("otro@test.com"), article=self.articulo, choice="Quizás")
+
+    def ids(self, **params):
+        respuesta = self.cliente(self.revisor).get("/api/bids/", params)
+        self.assertEqual(respuesta.status_code, 200)
+        return sorted(b["id"] for b in respuesta.data)
+
+    def test_sin_parametros_devuelve_todos_los_propios(self):
+        self.assertEqual(self.ids(), sorted([self.bid_a1.id, self.bid_a2.id, self.bid_b1.id]))
+
+    def test_filtra_por_conferencia(self):
+        self.assertEqual(self.ids(conference_id=self.conferencia.id), sorted([self.bid_a1.id, self.bid_a2.id]))
+        self.assertEqual(self.ids(conference_id=self.sesion_b1.conference_id), [self.bid_b1.id])
+
+    def test_filtra_por_sesion(self):
+        self.assertEqual(self.ids(session_id=self.sesion_a2.id), [self.bid_a2.id])
+
+    def test_combina_los_dos_filtros(self):
+        self.assertEqual(self.ids(conference_id=self.conferencia.id, session_id=self.sesion.id), [self.bid_a1.id])
+        self.assertEqual(self.ids(conference_id=self.sesion_b1.conference_id, session_id=self.sesion.id), [])
+
+    def test_id_no_numerico_responde_400(self):
+        for params in ({"conference_id": "abc"}, {"session_id": "1.5"}, {"conference_id": "-1"}, {"session_id": ""}):
+            with self.subTest(params=params):
+                respuesta = self.cliente(self.revisor).get("/api/bids/", params)
+                self.assertEqual(respuesta.status_code, 400)
+                self.assertEqual(respuesta.json(), {"error": "conference_id y session_id deben ser numéricos"})
+
+    def test_una_sola_consulta_sin_importar_la_cantidad_de_bids(self):
+        cliente = self.cliente(self.revisor)
+        with self.assertNumQueries(1):
+            cliente.get("/api/bids/", {"conference_id": self.conferencia.id})

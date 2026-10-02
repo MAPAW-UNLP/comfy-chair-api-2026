@@ -71,7 +71,17 @@ class ReviewerBidsView(APIView):
         reviewer_id = request.GET.get('reviewerId')
         if reviewer_id is not None and reviewer_id != str(uid):
             return Response({"error": "No podés ver los bids de otro revisor"}, status=status.HTTP_403_FORBIDDEN)
-        bids = Bid.objects.filter(reviewer_id=uid)
+        conference_id = request.GET.get('conference_id')
+        session_id = request.GET.get('session_id')
+        if any(valor is not None and not valor.isdecimal() for valor in (conference_id, session_id)):
+            return Response(
+                {"error": "conference_id y session_id deben ser numéricos"}, status=status.HTTP_400_BAD_REQUEST
+            )
+        bids = Bid.objects.filter(reviewer_id=uid).select_related("article")
+        if conference_id:
+            bids = bids.filter(article__session__conference_id=conference_id)
+        if session_id:
+            bids = bids.filter(article__session_id=session_id)
         serializer = BidSerializer(bids, many=True)
         return Response(serializer.data)
 
