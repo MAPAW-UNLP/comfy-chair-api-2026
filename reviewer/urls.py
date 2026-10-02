@@ -1,6 +1,6 @@
 from django.urls import path
 # from .api import ArticleDetailView, ArticleListView
-from .api import BiddingUpdateView, BiddingView, ReviewPublishView, ReviewUpdateDraftView, ReviewUpdatePublishedView, ReviewerBidsView, ReviewerDetailView, ReviewView, ReviewDetailView, ReviewsArticleView, ReviewByReviewerView, ReviewsByReviewerIdView,ReviewVersionsView
+from .api import BiddingUpdateView, BiddingView, ReviewPublishView, ReviewUpdateDraftView, ReviewUpdatePublishedView, ReviewerBidsView, ReviewerDetailView, ReviewView, ReviewDetailView, ReviewsArticleView, ReviewByReviewerView, ReviewsByReviewerIdView,ReviewVersionsView, ReviewerAssignmentsView
 urlpatterns = [
     # path('articles/', ArticleListView.as_view()),
     # path('articles/<int:pk>/', ArticleDetailView.as_view()),
@@ -16,6 +16,7 @@ urlpatterns = [
     path('reviews/<int:id>/updatePublished/',ReviewUpdatePublishedView.as_view(),name="review-update-published"),
     path('reviews/<int:id>/publish/', ReviewPublishView.as_view(), name='review-publish'),
     path('article/<int:article_id>/reviews/',ReviewsArticleView.as_view(),name="reviews-article"),
-    path('reviews/<int:articleId>/<int:reviewerId>/', ReviewByReviewerView.as_view(), name='review-by-reviewer')
+    path('reviews/<int:articleId>/<int:reviewerId>/', ReviewByReviewerView.as_view(), name='review-by-reviewer'),
+    path('assignments/', ReviewerAssignmentsView.as_view(), name='reviewer-assignments'),
 
 ]
