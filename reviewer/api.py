@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from reviewer.models import Review, Article, Bid, ReviewVersion, User
 from chair.models import ReviewAssignment
-from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer
+from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer, ReviewerAssignmentSerializer
 
 # # GET /api/articles
 # class ArticleListView(APIView):
@@ -269,3 +269,90 @@ class ReviewByReviewerView(APIView):
             return Response({"message": "No existe una revisión de ese artículo para este revisor"}, status=status.HTTP_404_NOT_FOUND)
        serializer = ReviewSerializer(review)
        return Response(serializer.data, status=status.HTTP_200_OK)
+
+def _entero_opcional(valor, nombre):
+    """Convierte un parámetro de query a int. None si no vino."""
+    if valor in (None, ""):
+        return None
+    try:
+        return int(valor)
+    except ValueError:
+        raise ValueError(f"{nombre} debe ser un número entero")
+ 
+ 
+def _calcular_estadisticas(items):
+    """Cuenta estados y progreso por sesión sobre la lista ya serializada."""
+    stats = {
+        "total": len(items),
+        "published": 0,
+        "draft": 0,
+        "pending": 0,
+        "by_session": [],
+    }
+    por_sesion = {}
+    for item in items:
+        stats[item["review_status"]] += 1
+        sesion = item["session"]
+        if sesion is None:
+            # Un artículo sin sesión cuenta en el total pero no tiene fila propia.
+            continue
+        fila = por_sesion.setdefault(sesion["id"], {
+            "session_id": sesion["id"],
+            "title": sesion["title"],
+            "total": 0,
+            "published": 0,
+        })
+        fila["total"] += 1
+        if item["review_status"] == "published":
+            fila["published"] += 1
+    stats["by_session"] = list(por_sesion.values())
+    return stats
+ 
+ 
+# GET /api/reviewer/assignments/?conference_id=<int>&session_id=<int>
+# Devuelve los artículos asignados al revisor logueado, con el estado de su
+# review y estadísticas, en un solo request. Ambos filtros son opcionales.
+class ReviewerAssignmentsView(APIView):
+    def get(self, request):
+        # El revisor sale del token, nunca del query ni del body.
+        uid = getattr(request, "user_id", None)
+        if not uid:
+            return Response({"error": "Usuario no autenticado"}, status=status.HTTP_401_UNAUTHORIZED)
+ 
+        try:
+            conference_id = _entero_opcional(request.query_params.get("conference_id"), "conference_id")
+            session_id = _entero_opcional(request.query_params.get("session_id"), "session_id")
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+ 
+        asignaciones = (
+            ReviewAssignment.objects
+            .filter(reviewer_id=uid, deleted=False)
+            .select_related("article__session__conference")
+            .order_by("article__session_id", "article_id")
+        )
+        if conference_id is not None:
+            asignaciones = asignaciones.filter(article__session__conference_id=conference_id)
+        if session_id is not None:
+            asignaciones = asignaciones.filter(article__session_id=session_id)
+        asignaciones = list(asignaciones)
+ 
+        # Las reviews propias de esos artículos, en una sola consulta.
+        # gana la primera por id (igual que ReviewDetailView, que usa .first()).
+        reviews = {}
+        propias = Review.objects.filter(
+            reviewer_id=uid,
+            article_id__in=[a.article_id for a in asignaciones],
+        ).order_by("id")
+        for review in propias:
+            reviews.setdefault(review.article_id, review)
+ 
+        items = ReviewerAssignmentSerializer(
+            asignaciones, many=True, context={"reviews": reviews}
+        ).data
+ 
+        return Response(
+            {"results": items, "stats": _calcular_estadisticas(items)},
+            status=status.HTTP_200_OK,
+        )
+ 
