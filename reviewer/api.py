@@ -35,10 +35,17 @@ from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerialize
 class BiddingView(APIView):
     def post(self, request):
         serializer = BidSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response({"error": "Opción de interés inválida"}, status=status.HTTP_400_BAD_REQUEST)
+        bid, created = Bid.objects.update_or_create(
+            reviewer=serializer.validated_data["reviewer"],
+            article=serializer.validated_data["article"],
+            defaults={"choice": serializer.validated_data["choice"]},
+        )
+        return Response(
+            BidSerializer(bid).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
     
 
 # PUT /api/bidding/{id}

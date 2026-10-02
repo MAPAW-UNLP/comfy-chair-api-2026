@@ -43,3 +43,8 @@ class Bid(models.Model):
         null=True,
         blank=True
     )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["reviewer", "article"], name="unique_bid_per_reviewer_article")
+        ]

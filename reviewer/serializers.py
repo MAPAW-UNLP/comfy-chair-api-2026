@@ -11,9 +11,12 @@ class ArticleSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'abstract']
 
 class BidSerializer(serializers.ModelSerializer):
+    choice = serializers.ChoiceField(choices=Bid.STATE_CHOICES)
+
     class Meta:
         model = Bid
         fields = ['id', 'reviewer', 'article', 'choice']
+        validators = []
 
 
 class BidUpdateSerializer(serializers.ModelSerializer):
