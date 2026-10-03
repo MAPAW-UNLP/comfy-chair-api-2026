@@ -2,7 +2,7 @@ from user.models import User
 from rest_framework import serializers
 from user.serializers import UserSerializer
 from conference_session.models import Session
-from .models import Article, ArticleDeletionRequest
+from .models import Article, ArticleDeletionRequest, ArticleHistory
 from conference_session.serializers import SessionSerializer
 
 # --- Serializer para Article ---
@@ -33,6 +33,17 @@ class ArticleSerializer(serializers.ModelSerializer):
             'authors_ids', 'corresponding_author_id',
             'session', 'session_id'
         ]
+
+
+class ArticleHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ArticleHistory
+        fields = [
+            'id', 'article', 'event_type', 'metadata',
+            'created_by', 'reviewed_by', 'created_at',
+        ]
+        read_only_fields = fields
+
 
 # --- Serializer para ArticleDeletionRequest ---
 class ArticleDeletionRequestSerializer(serializers.ModelSerializer):
