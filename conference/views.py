@@ -58,6 +58,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
                 user_data = users_by_id.setdefault(user.id, {
                     'id': user.id,
                     'full_name': user.full_name,
+                    'email': user.email,
                     'affiliation': user.affiliation,
                     'roles': [],
                 })

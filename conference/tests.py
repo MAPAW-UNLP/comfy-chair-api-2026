@@ -104,6 +104,10 @@ class ConferenceUsersActionTests(TestCase):
         self.assertEqual(response.data['conference_id'], self.conference.pk)
         users = {user['id']: user for user in response.data['users']}
         self.assertEqual(
+            users[conference_chair.pk]['email'],
+            conference_chair.email,
+        )
+        self.assertEqual(
             users[conference_chair.pk]['roles'],
             ['conference_chair'],
         )
