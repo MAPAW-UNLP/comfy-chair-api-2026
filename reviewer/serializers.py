@@ -1,7 +1,8 @@
 
 from rest_framework import serializers
-from reviewer.models import  Review, User,Article,Bid, ReviewVersion
+from reviewer.models import  Review, User,Article,Bid, ReviewVersion, ReviewerInvitation
 from chair.models import ReviewAssignment
+from conference.models import Conference
 
 
 class ArticleSerializer(serializers.ModelSerializer):
@@ -108,3 +109,45 @@ class ReviewVersionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReviewVersion
         fields = ['id','review','version_number','score','opinion','created_at']
+
+
+class InvitationConferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Conference
+        fields = ['id', 'title']
+
+
+class InvitationUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'full_name']
+
+
+# Solo lectura. Espera un queryset anotado con with_effective_status()
+class ReviewerInvitationSerializer(serializers.ModelSerializer):
+    status = serializers.CharField(source='effective_status', read_only=True)
+    conference = InvitationConferenceSerializer(read_only=True)
+    invited_by = InvitationUserSerializer(read_only=True)
+
+    class Meta:
+        model = ReviewerInvitation
+        fields = ['id', 'status', 'conference', 'invited_by', 'sent_at', 'expires_at', 'responded_at']
+        read_only_fields = fields
+
+
+class InvitationConferenceDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Conference
+        fields = ['id', 'title', 'description', 'start_date', 'end_date', 'blind_kind']
+
+
+# Igual que el ítem del listado, con más datos de la conferencia
+class ReviewerInvitationDetailSerializer(ReviewerInvitationSerializer):
+    conference = InvitationConferenceDetailSerializer(read_only=True)
+
+    class Meta(ReviewerInvitationSerializer.Meta):
+        pass
+
+
+class RejectInvitationSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=500)

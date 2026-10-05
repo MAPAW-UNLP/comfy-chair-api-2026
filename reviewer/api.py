@@ -7,9 +7,11 @@ from rest_framework import status
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
-from reviewer.models import Review, Article, Bid, ReviewVersion, User
+from django.db.models import Case, Exists, F, OuterRef, Q, Value, When
+from reviewer.models import Review, Article, Bid, ReviewVersion, User, ReviewerInvitation
 from chair.models import ReviewAssignment
-from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer
+from conference.models import Conference
+from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer, ReviewerInvitationSerializer, ReviewerInvitationDetailSerializer, RejectInvitationSerializer
 
 # # GET /api/articles
 # class ArticleListView(APIView):
@@ -269,3 +271,166 @@ class ReviewByReviewerView(APIView):
             return Response({"message": "No existe una revisión de ese artículo para este revisor"}, status=status.HTTP_404_NOT_FOUND)
        serializer = ReviewSerializer(review)
        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# GET /api/reviewer/invitations/?status=<pending|accepted|rejected|expired>
+# Devuelve las invitaciones a comités de revisión del usuario logueado
+class ReviewerInvitationsView(APIView):
+    VALID_STATUSES = {'pending', 'accepted', 'rejected', 'expired'}
+
+    def get(self, request):
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return Response({'error': 'Usuario no autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        status_filter = request.query_params.get('status')
+        if status_filter is not None and status_filter not in self.VALID_STATUSES:
+            return Response(
+                {'error': f"Estado inválido. Valores posibles: {', '.join(sorted(self.VALID_STATUSES))}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        invitations = (
+            ReviewerInvitation.objects
+            .filter(reviewer_id=user_id)
+            .with_effective_status()
+            .select_related('conference', 'invited_by')
+        )
+        if status_filter:
+            invitations = invitations.filter(effective_status=status_filter)
+
+        # Pendientes primero (por fecha límite más próxima, las que no vencen al final);
+        # después el resto por fecha de respuesta descendente
+        invitations = invitations.annotate(
+            is_pending=Case(When(effective_status='pending', then=Value(0)), default=Value(1)),
+            pending_expires_at=Case(When(effective_status='pending', then=F('expires_at'))),
+        ).order_by(
+            'is_pending',
+            F('pending_expires_at').asc(nulls_last=True),
+            F('responded_at').desc(nulls_last=True),
+            '-sent_at',
+        )
+
+        serializer = ReviewerInvitationSerializer(invitations, many=True)
+        return Response({'results': serializer.data}, status=status.HTTP_200_OK)
+
+
+# GET /api/reviewer/invitations/{id}/
+# Devuelve el detalle de una invitación del usuario logueado
+class ReviewerInvitationDetailView(APIView):
+    def get(self, request, id):
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return Response({'error': 'Usuario no autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        invitation = (
+            ReviewerInvitation.objects
+            .with_effective_status()
+            .select_related('conference', 'invited_by')
+            .filter(id=id)
+            .first()
+        )
+        if invitation is None:
+            return Response({'error': 'Invitación no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        if invitation.reviewer_id != user_id:
+            return Response({'error': 'No tenés acceso a esta invitación'}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = ReviewerInvitationDetailSerializer(invitation)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# Lógica común para aceptar/rechazar una invitación
+class RespondInvitationView(APIView):
+    new_status = None
+
+    def apply(self, invitation, data):
+        pass
+
+    def respond(self, request, id, data=None):
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return Response({'error': 'Usuario no autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # select_for_update bloquea la fila hasta el fin de la transacción:
+        # dos requests simultáneos no pueden responder la misma invitación
+        with transaction.atomic():
+            invitation = ReviewerInvitation.objects.select_for_update().filter(id=id).first()
+            if invitation is None:
+                return Response({'error': 'Invitación no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+            if invitation.reviewer_id != user_id:
+                return Response({'error': 'No tenés permiso sobre esta invitación'}, status=status.HTTP_403_FORBIDDEN)
+            if invitation.status != 'pending':
+                return Response({'error': 'Esta invitación ya fue respondida'}, status=status.HTTP_409_CONFLICT)
+            if invitation.is_expired():
+                return Response({'error': 'La invitación está vencida'}, status=status.HTTP_400_BAD_REQUEST)
+
+            invitation.status = self.new_status
+            invitation.responded_at = timezone.now()
+            self.apply(invitation, data)
+            invitation.save()
+
+        invitation = (
+            ReviewerInvitation.objects
+            .with_effective_status()
+            .select_related('conference', 'invited_by')
+            .get(id=id)
+        )
+        return Response(ReviewerInvitationDetailSerializer(invitation).data, status=status.HTTP_200_OK)
+
+
+# POST /api/reviewer/invitations/{id}/accept/
+class AcceptInvitationView(RespondInvitationView):
+    new_status = 'accepted'
+
+    def post(self, request, id):
+        return self.respond(request, id)
+
+
+# POST /api/reviewer/invitations/{id}/reject/   body: { "reason": "..." } (opcional)
+class RejectInvitationView(RespondInvitationView):
+    new_status = 'rejected'
+
+    def apply(self, invitation, data):
+        invitation.rejection_reason = data.get('reason') or ''
+
+    def post(self, request, id):
+        serializer = RejectInvitationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'error': 'El motivo debe ser un texto de hasta 500 caracteres'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return self.respond(request, id, serializer.validated_data)
+
+
+# GET /api/reviewer/conferences/
+# Conferencias donde el usuario es revisor: invitación aceptada o al menos una asignación no borrada
+class ReviewerConferencesView(APIView):
+    def get(self, request):
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return Response({'error': 'Usuario no autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        has_assignments = Exists(ReviewAssignment.objects.filter(
+            reviewer_id=user_id,
+            deleted=False,
+            article__session__conference=OuterRef('pk'),
+        ))
+        has_accepted_invitation = Exists(ReviewerInvitation.objects.filter(
+            reviewer_id=user_id,
+            status='accepted',
+            conference=OuterRef('pk'),
+        ))
+        # Exists evita filas duplicadas, por eso no hace falta distinct()
+        conferences = (
+            Conference.objects
+            .annotate(has_assignments=has_assignments, has_accepted_invitation=has_accepted_invitation)
+            .filter(Q(has_assignments=True) | Q(has_accepted_invitation=True))
+            .order_by('title')
+        )
+
+        results = [
+            {'id': c.id, 'title': c.title, 'has_assignments': c.has_assignments}
+            for c in conferences
+        ]
+        return Response({'results': results}, status=status.HTTP_200_OK)

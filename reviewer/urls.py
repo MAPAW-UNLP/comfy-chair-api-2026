@@ -1,7 +1,12 @@
 from django.urls import path
 # from .api import ArticleDetailView, ArticleListView
-from .api import BiddingUpdateView, BiddingView, ReviewPublishView, ReviewUpdateDraftView, ReviewUpdatePublishedView, ReviewerBidsView, ReviewerDetailView, ReviewView, ReviewDetailView, ReviewsArticleView, ReviewByReviewerView, ReviewsByReviewerIdView,ReviewVersionsView
+from .api import BiddingUpdateView, BiddingView, ReviewPublishView, ReviewUpdateDraftView, ReviewUpdatePublishedView, ReviewerBidsView, ReviewerDetailView, ReviewView, ReviewDetailView, ReviewsArticleView, ReviewByReviewerView, ReviewsByReviewerIdView,ReviewVersionsView, ReviewerInvitationsView, ReviewerInvitationDetailView, AcceptInvitationView, RejectInvitationView, ReviewerConferencesView
 urlpatterns = [
+    path('reviewer/conferences/', ReviewerConferencesView.as_view(), name='reviewer-conferences'),
+    path('reviewer/invitations/', ReviewerInvitationsView.as_view(), name='reviewer-invitations'),
+    path('reviewer/invitations/<int:id>/', ReviewerInvitationDetailView.as_view(), name='reviewer-invitation-detail'),
+    path('reviewer/invitations/<int:id>/accept/', AcceptInvitationView.as_view(), name='reviewer-invitation-accept'),
+    path('reviewer/invitations/<int:id>/reject/', RejectInvitationView.as_view(), name='reviewer-invitation-reject'),
     # path('articles/', ArticleListView.as_view()),
     # path('articles/<int:pk>/', ArticleDetailView.as_view()),
     path('bidding/', BiddingView.as_view()),
