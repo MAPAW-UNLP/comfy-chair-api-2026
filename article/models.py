@@ -89,6 +89,32 @@ class ArticleHistory(models.Model):
         return f"{self.article.title} - {self.event_type} - {self.created_at}"
 
 
+
+class ArticleHistory(models.Model):
+
+    EVENT_TYPE_CHOICES = [
+        ('draft_created', 'Borrador creado'),
+        ('submitted', 'Artículo enviado'),
+        ('reviewer_assigned', 'Revisor asignado'),
+        ('review_received', 'Dictamen recibido'),
+        ('final_verdict', 'Veredicto final generado'),
+    ]
+
+    event_type = models.CharField(max_length=40, choices=EVENT_TYPE_CHOICES)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    article = models.ForeignKey(Article, on_delete=models.CASCADE, related_name='history_events')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='article_history_created')
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='article_history_reviews')
+
+    class Meta:
+        ordering = ['created_at', 'id']
+
+    def __str__(self):
+        return f"{self.article.title} - {self.event_type} - {self.created_at}"
+
+
 # --- Modelo ArticleDeletionRequest --- #
 class ArticleDeletionRequest(models.Model):
     
