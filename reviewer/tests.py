@@ -12,6 +12,7 @@ from article.models import Article
 from chair.models import ReviewAssignment
 from conference.models import Conference
 from conference_session.models import Session
+from notification.models import Notification
 from reviewer.models import ReviewerInvitation
 from user.models import User
 
@@ -101,13 +102,19 @@ class ReviewerInvitationsViewTests(APITestCase):
         item = self.get().json()['results'][0]
         self.assertEqual(
             set(item.keys()),
-            {'id', 'status', 'conference', 'invited_by', 'sent_at', 'expires_at', 'responded_at'},
+            {'id', 'status', 'conference', 'invited_by', 'sent_at', 'expires_at', 'responded_at', 'rejection_reason'},
         )
         self.assertEqual(item['id'], invitation.id)
         self.assertEqual(item['status'], 'pending')
         self.assertEqual(item['conference'], {'id': invitation.conference.id, 'title': 'CACIC'})
         self.assertEqual(item['invited_by'], {'id': self.chair.id, 'full_name': 'Chair Uno'})
         self.assertIsNone(item['responded_at'])
+        self.assertEqual(item['rejection_reason'], '')
+
+    def test_rechazada_incluye_el_motivo(self):
+        self.invite('Rechazada', status='rejected', responded_at=self.now, rejection_reason='Sin disponibilidad')
+        item = self.get('?status=rejected').json()['results'][0]
+        self.assertEqual(item['rejection_reason'], 'Sin disponibilidad')
 
     def test_nunca_aparecen_invitaciones_de_otro_usuario(self):
         mine = self.invite('Conf A')
@@ -221,10 +228,11 @@ class ReviewerInvitationDetailViewTests(APITestCase):
         data = response.json()
         self.assertEqual(
             set(data.keys()),
-            {'id', 'status', 'conference', 'invited_by', 'sent_at', 'expires_at', 'responded_at'},
+            {'id', 'status', 'conference', 'invited_by', 'sent_at', 'expires_at', 'responded_at', 'rejection_reason'},
         )
         self.assertEqual(data['id'], invitation.id)
         self.assertEqual(data['status'], 'pending')
+        self.assertEqual(data['rejection_reason'], '')
         self.assertEqual(data['conference'], {
             'id': invitation.conference.id,
             'title': 'CACIC',
@@ -241,6 +249,12 @@ class ReviewerInvitationDetailViewTests(APITestCase):
         data = self.get(invitation.id).json()
         self.assertEqual(data['status'], 'accepted')
         self.assertIsNotNone(data['responded_at'])
+
+    def test_invitacion_rechazada_muestra_el_motivo(self):
+        invitation = self.invite(status='rejected', responded_at=self.now, rejection_reason='Sin disponibilidad')
+        data = self.get(invitation.id).json()
+        self.assertEqual(data['status'], 'rejected')
+        self.assertEqual(data['rejection_reason'], 'Sin disponibilidad')
 
     def test_invitacion_vencida(self):
         invitation = self.invite(expires_at=self.now - timedelta(days=1))
@@ -319,6 +333,7 @@ class RespondInvitationViewTests(APITestCase):
         invitation = self.invite()
         response = self.post(invitation.id, 'reject', {'reason': 'Conflicto de interés'})
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['rejection_reason'], 'Conflicto de interés')
 
         invitation.refresh_from_db()
         self.assertEqual(invitation.status, 'rejected')
@@ -641,3 +656,50 @@ class ReviewerInvitationsRegressionTests(ReviewerTestCase):
         for action in ['accept', 'reject']:
             self.assertEqual(self.client.post(self.invitation_url(invitation.id, action)).status_code, 401)
         self.assertEqual(self.snapshot(invitation), before)
+
+
+# Notificación al recibir una invitación (usa el sistema de notificaciones existente)
+class ReviewerInvitationNotificationTests(ReviewerTestCase):
+    TITLE = 'Nueva invitación para revisar'
+
+    def invitation_notifications(self, user=None):
+        return Notification.objects.filter(user=user or self.reviewer, title=self.TITLE)
+
+    def test_crear_una_invitacion_notifica_al_revisor(self):
+        self.invite(make_conference('CACIC'))
+        notifications = self.invitation_notifications()
+        self.assertEqual(notifications.count(), 1)
+        notification = notifications.get()
+        self.assertEqual(notification.type, 'info')
+        self.assertFalse(notification.read)
+        self.assertIn("'CACIC'", notification.message)
+        self.assertIn('Chair Uno', notification.message)
+        self.assertIn('Revisor → Invitaciones', notification.message)
+
+    def test_el_mensaje_incluye_la_fecha_limite_si_tiene(self):
+        expires_at = timezone.now() + timedelta(days=3)
+        self.invite(make_conference('CACIC'), expires_at=expires_at)
+        message = self.invitation_notifications().get().message
+        self.assertIn(timezone.localtime(expires_at).strftime('%d/%m/%Y'), message)
+
+    def test_sin_fecha_limite_no_menciona_plazo(self):
+        self.invite(make_conference('CACIC'))
+        self.assertNotIn('hasta el', self.invitation_notifications().get().message)
+
+    def test_solo_se_notifica_al_invitado(self):
+        self.invite(make_conference('CACIC'))
+        self.assertEqual(self.invitation_notifications(user=self.other).count(), 0)
+        self.assertEqual(self.invitation_notifications(user=self.chair).count(), 0)
+
+    def test_aceptar_o_rechazar_no_genera_otra_notificacion_de_invitacion(self):
+        accepted = self.invite(make_conference('Conf A'))
+        rejected = self.invite(make_conference('Conf B'))
+        self.api_post(self.invitation_url(accepted.id, 'accept'))
+        self.api_post(self.invitation_url(rejected.id, 'reject'), {'reason': 'Sin tiempo'})
+        self.assertEqual(self.invitation_notifications().count(), 2)  # una por cada invitación creada
+
+    def test_la_notificacion_aparece_en_el_endpoint_de_notificaciones(self):
+        self.invite(make_conference('CACIC'))
+        response = self.api_get('/notifications/')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.TITLE, [n['title'] for n in response.json()])

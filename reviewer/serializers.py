@@ -131,7 +131,7 @@ class ReviewerInvitationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ReviewerInvitation
-        fields = ['id', 'status', 'conference', 'invited_by', 'sent_at', 'expires_at', 'responded_at']
+        fields = ['id', 'status', 'conference', 'invited_by', 'sent_at', 'expires_at', 'responded_at', 'rejection_reason']
         read_only_fields = fields
 
 
