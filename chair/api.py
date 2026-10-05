@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Count
 from django.db import transaction
+from .helper import createHistoryEvent
 
 class ChairAPI(APIView):
     def get(self, request):
@@ -167,12 +168,9 @@ class CutoffSelectionAPI(APIView):
                 {'message': 'La sesión no tiene artículos asociados.'},
                 status=400
             )
-        articles = (
-            Article.objects.filter(session=session)
-            .annotate(avg_score=Avg("review__score"))
-            .exclude(avg_score=None)
-            .order_by("-avg_score")
-        )
+
+        articles = Article.objects.fully_reviewed_by_session(session)
+        
         if not articles.exists():
             return JsonResponse(
                 {'message': 'No hay artículos con puntajes disponibles para esta sesión.'},
@@ -185,19 +183,13 @@ class CutoffSelectionAPI(APIView):
         
         accepted_articles = articles[:cutoff_index]
         rejected_articles = articles[cutoff_index:]
-        
+
         Article.objects.filter(id__in=[a.id for a in accepted_articles]).update(status="accepted")
         Article.objects.filter(id__in=[a.id for a in rejected_articles]).update(status="rejected")
 
-        print("PAREN DE LLAMAR")
-
-        #Historial
-        for i in articles:
-            ArticleHistory.objects.create(
-                event_type= 'final_verdict',
-                article=i,
-            )
-
+        #Crea evento en el historial.
+        createHistoryEvent(accepted_articles, rejected_articles)
+                
         response_data = {
             "session": session.title,
             "capacity": session.capacity,
@@ -258,20 +250,15 @@ class ScoreThresholdSelectionAPI(APIView):
             session = Session.objects.get(id=session_id)
         except Session.DoesNotExist:
             return JsonResponse({"error": "Sesión no encontrada."}, status=404)
-
-        # Verificar si tiene artículos
-        articles = (
-            Article.objects.filter(session=session)
-            .annotate(avg_score=Avg("review__score"))
-            .exclude(avg_score=None)
-        )
+        
+        articles = Article.objects.fully_reviewed_by_session(session)
 
         if not articles.exists():
             return JsonResponse(
                 {"message": "No hay artículos con puntajes disponibles para esta sesión."},
                 status=200
             )
-
+        
         # Seleccionar según el valor de corte
         accepted_articles = articles.filter(avg_score__gt=cutoff_score)
         rejected_articles = articles.exclude(avg_score__gt=cutoff_score)
@@ -279,14 +266,10 @@ class ScoreThresholdSelectionAPI(APIView):
         # Actualizar estados
         Article.objects.filter(id__in=[a.id for a in accepted_articles]).update(status="accepted")
         Article.objects.filter(id__in=[a.id for a in rejected_articles]).update(status="rejected")
-        print("PAREN DE LLAMAR")
-        #Historial
-        for i in articles:
-            ArticleHistory.objects.create(
-                event_type= 'final_verdict',
-                article=i,
-            )
-        
+
+        #Crea evento en el historial
+        createHistoryEvent(accepted_articles, rejected_articles)
+                
         # Preparar respuesta
         response_data = {
             "session": session.title,

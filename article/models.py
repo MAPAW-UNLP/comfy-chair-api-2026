@@ -1,6 +1,29 @@
 from user.models import User
 from django.db import models
+from django.db.models import Avg
 from conference_session.models import Session
+
+# Querys personalizadas
+class ArticleQuerySet(models.QuerySet):
+
+    def fully_reviewed_by_session(self, session):
+        #Retorna artículos de una sesión con todas sus asignaciones revisadas,
+        #calculando el promedio de puntajes ordenado descendentemente.
+        return (
+            self.filter(
+                session=session,
+                reviewassignment__reviewed=True,
+                reviewassignment__deleted=False,
+            )
+            .exclude(
+                reviewassignment__reviewed=False,
+                reviewassignment__deleted=False,
+            )
+            .annotate(avg_score=Avg("review__score"))
+            .exclude(avg_score=None)
+            .distinct()
+            .order_by("-avg_score")
+        )
 
 # --- Modelo Article --- #
 class Article(models.Model):
@@ -37,6 +60,8 @@ class Article(models.Model):
 
     def __str__(self):
         return self.title
+    
+    objects = ArticleQuerySet.as_manager()
 
 
 class ArticleHistory(models.Model):
