@@ -6,6 +6,13 @@ from django.http import FileResponse, Http404
 from article.models import Article, ArticleDeletionRequest
 from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer
 
+
+from article.models import Article
+from article.serializers import ArticleSerializer
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
 # --- Endpoints para el modelo Article ---
 class ArticleViewSet(viewsets.ModelViewSet):
 
@@ -78,3 +85,5 @@ class ArticleViewSet(viewsets.ModelViewSet):
         articles = Article.objects.filter(session__conference=conference_id)
         serializer = ArticleSerializer(articles, many=True)
         return Response(serializer.data)
+
+
