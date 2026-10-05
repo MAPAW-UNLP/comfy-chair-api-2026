@@ -96,15 +96,22 @@ class ReviewerDetailSerializer(serializers.ModelSerializer):
 class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
-        fields = ['id','score','opinion','created_at','updated_at','reviewer','article','is_published']
+        fields = ['id', 'score', 'opinion', 'chair_comments', 'created_at', 'updated_at', 'reviewer', 'article', 'is_published']
+
 
 class ReviewUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
-        fields = ['score','opinion', 'updated_at','is_published']  
+        fields = ['score', 'opinion', 'chair_comments', 'updated_at', 'is_published']
 
 
 class ReviewVersionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReviewVersion
-        fields = ['id','review','version_number','score','opinion','created_at']
+        fields = ['id', 'review', 'version_number', 'score', 'opinion', 'chair_comments', 'created_at']
+
+
+class PublicReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = ['id', 'article', 'reviewer', 'score', 'opinion', 'created_at', 'updated_at']

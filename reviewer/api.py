@@ -9,7 +9,15 @@ from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from reviewer.models import Review, Article, Bid, ReviewVersion, User
 from chair.models import ReviewAssignment
-from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer
+from reviewer.serializers import (
+    ReviewUpdateSerializer,
+    ReviewerDetailSerializer,
+    BidSerializer,
+    BidUpdateSerializer,
+    ReviewSerializer,
+    ReviewVersionSerializer,
+    PublicReviewSerializer,
+)
 
 # # GET /api/articles
 # class ArticleListView(APIView):
@@ -83,7 +91,17 @@ class ReviewerDetailView(APIView):
 #Guarda una nueva revisión en borrador
 class ReviewView(APIView):
     def post(self, request):
-        serializer = ReviewSerializer(data = request.data)
+        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        user_id = getattr(request, "user_id", None)
+        if user_id is not None:
+            if "reviewer" not in data:
+                data["reviewer"] = user_id
+            elif int(data["reviewer"]) != user_id:
+                return Response(
+                    {"error": "No tenés permiso para crear una revisión para otro revisor"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        serializer = ReviewSerializer(data=data)
         if serializer.is_valid():   
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -122,6 +140,12 @@ class ReviewsByReviewerIdView(APIView):
 class ReviewVersionsView(APIView):
     def get(self, request, idReview):
         review = get_object_or_404(Review, id=idReview)
+        user_id = getattr(request, "user_id", None)
+        if user_id is not None and review.reviewer_id != user_id:
+            return Response(
+                {"error": "No tenés permiso sobre esta revisión"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         versions = ReviewVersion.objects.filter(review=review).order_by('version_number')
         if not versions.exists():
             return Response(
@@ -133,139 +157,146 @@ class ReviewVersionsView(APIView):
     
 #PUT /api/reviews/{idReview}/publish/
 class ReviewPublishView(APIView):
-      def put(self, request, id):
+    def put(self, request, id):
         review = get_object_or_404(Review, id=id)
-        # se necesita modificar el middleware del login, user como objeto no solo el id.      
-        # Verificar que el usuario que modifica el estado es el autor
-        #if review.review_assignment.reviewer != request.user:
-          #  return Response(
-         #       {"error": "No tienes permisos para publicar esta revisión"},
-        #        status=status.HTTP_403_FORBIDDEN
-        #    )        
-        # Validaciones
+        user_id = getattr(request, "user_id", None)
+        if user_id is not None and review.reviewer_id != user_id:
+            return Response(
+                {"error": "No tenés permiso sobre esta revisión"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         if review.is_published:
             return Response(
                 {"error": "La revisión ya está publicada"},
-                status=status.HTTP_400_BAD_REQUEST
-            )       
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if review.score is None:
             return Response(
                 {"error": "La revisión debe tener una puntuación"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
         if not review.opinion:
             return Response(
                 {"error": "La revisión debe tener una opinión"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        # Usar transacción atómica para garantizar consistencia
+
         with transaction.atomic():
             try:
                 assignment = ReviewAssignment.objects.get(
-                    reviewer=review.reviewer,                    
-                    article=review.article
+                    reviewer=review.reviewer,
+                    article=review.article,
                 )
                 assignment.reviewed = True
                 assignment.save()
             except ReviewAssignment.DoesNotExist:
                 return Response(
                     {"error": "No se encontró la asignación de revisión"},
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            
-            # Publicar la revisión
+
             review.is_published = True
-            review.created_at = timezone.now()  
+            review.created_at = timezone.now()
             review.save()
-           #Creo la primera version 
             ReviewVersion.objects.create(
                 review=review,
                 version_number=1,
                 score=review.score,
-                opinion=review.opinion,           
-                )
-        
-     
+                opinion=review.opinion,
+                chair_comments=review.chair_comments,
+            )
+
         serializer = ReviewSerializer(review)
         return Response(serializer.data, status=status.HTTP_200_OK)
-      
 
 
 # PUT api/reviews/{idReview}/updateDraft/
 class ReviewUpdateDraftView(APIView):
     def put(self, request, id):
         review = get_object_or_404(Review, id=id)
-        # se necesita modificar el middleware del login, user como objeto no solo el id.
-        #if review.review_assignment.reviewer != request.user:
-        #  return Response({"error": "Sin permisos"}, status=403)
-        
+        user_id = getattr(request, "user_id", None)
+        if user_id is not None and review.reviewer_id != user_id:
+            return Response(
+                {"error": "No tenés permiso sobre esta revisión"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         if review.is_published:
-            return Response({"error": "Usa el endpoint para revisiones publicadas"}, status=400)
-        
+            return Response(
+                {"error": "Usa el endpoint para revisiones publicadas"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = ReviewUpdateSerializer(review, data=request.data, partial=True)
-        # Actualización sin versiones
         if serializer.is_valid():
-            updated_review = serializer.save() 
+            updated_review = serializer.save()
             return Response(ReviewSerializer(updated_review).data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 # PUT api/reviews/{idReview}/updatePublished/
 class ReviewUpdatePublishedView(APIView):
     def put(self, request, id):
         review = get_object_or_404(Review, id=id)
-        # se necesita modificar el middleware del login, user como objeto no solo el id.
-        #if review.review_assignment.reviewer != request.user:
-         #   return Response({"error": "Sin permisos"}, status=403)
-        
+        user_id = getattr(request, "user_id", None)
+        if user_id is not None and review.reviewer_id != user_id:
+            return Response(
+                {"error": "No tenés permiso sobre esta revisión"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         if not review.is_published:
-            return Response({"error": "Usa el endpoint para borradores"}, status=400)
-        
+            return Response(
+                {"error": "Usa el endpoint para borradores"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = ReviewUpdateSerializer(review, data=request.data, partial=True)
         if not serializer.is_valid():
-            return Response(serializer.errors, status=400)
-        
-        try:
-            # Actualiza la revision
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
             updated_review = serializer.save()
-            
-            # Creo la version con los nuevos valores:
-            last_version = review.versions.last()
+            last_version = review.versions.order_by("version_number").last()
             new_version_number = last_version.version_number + 1 if last_version else 1
-            
+
             ReviewVersion.objects.create(
                 review=updated_review,
                 version_number=new_version_number,
-                score=updated_review.score,        
+                score=updated_review.score,
                 opinion=updated_review.opinion,
-            )
-            
-            return Response(ReviewSerializer(updated_review).data, status=200)
-            
-        except Exception as e:
-            return Response(
-                {"error": f"Error al actualizar: {str(e)}"},
-                status=500
+                chair_comments=updated_review.chair_comments,
             )
 
- 
-#GET /api/article/<int:article_id>/reviews/    
+        return Response(ReviewSerializer(updated_review).data, status=status.HTTP_200_OK)
+
+
+# GET /api/article/<int:article_id>/reviews/
 class ReviewsArticleView(APIView):
-   def get(self, request, article_id):  
-        # SOLO revisiones publicadas
-        reviews = Review.objects.filter(article=article_id, is_published=True)
-        serializer = ReviewSerializer(reviews, many=True)
+    def get(self, request, article_id):
+        reviews = Review.objects.filter(article_id=article_id, is_published=True)
+        serializer = PublicReviewSerializer(reviews, many=True)
         return Response({
             "article_id": article_id,
             "count": reviews.count(),
-            "reviews": serializer.data
+            "reviews": serializer.data,
         })
-   
+
+
 # GET /api/reviews/{articleId}/{reviewerId}/
 class ReviewByReviewerView(APIView):
     def get(self, request, articleId, reviewerId):
-       review = Review.objects.filter(article_id=articleId, reviewer_id=reviewerId).first()
-       if not review:
-            return Response({"message": "No existe una revisión de ese artículo para este revisor"}, status=status.HTTP_404_NOT_FOUND)
-       serializer = ReviewSerializer(review)
-       return Response(serializer.data, status=status.HTTP_200_OK)
+        user_id = getattr(request, "user_id", None)
+        if user_id is not None and int(reviewerId) != user_id:
+            return Response(
+                {"error": "No tenés permiso sobre esta revisión"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        review = Review.objects.filter(article_id=articleId, reviewer_id=reviewerId).first()
+        if not review:
+            return Response(
+                {"message": "No existe una revisión de ese artículo para este revisor"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = ReviewSerializer(review)
+        return Response(serializer.data, status=status.HTTP_200_OK)
