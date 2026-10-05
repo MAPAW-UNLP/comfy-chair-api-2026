@@ -770,3 +770,67 @@ class ReviewAssignmentRequiredTests(ReviewerTestCase):
         assignment.refresh_from_db()
         self.assertTrue(review.is_published)
         self.assertTrue(assignment.reviewed)
+
+    # --- Editar ---
+
+    def update(self, review, endpoint):
+        return self.client.put(
+            f'/api/reviews/{review.id}/{endpoint}/', {'opinion': 'Cambiada'},
+            content_type='application/json', **auth_header(self.reviewer),
+        )
+
+    def test_editar_borrador_sin_asignacion_devuelve_403_y_no_cambia(self):
+        review = Review.objects.create(reviewer=self.reviewer, article=self.article, score=1, opinion='Ok')
+        response = self.update(review, 'updateDraft')
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), self.NOT_ASSIGNED)
+        review.refresh_from_db()
+        self.assertEqual(review.opinion, 'Ok')
+
+    def test_editar_publicada_sin_asignacion_devuelve_403_y_no_cambia(self):
+        review = Review.objects.create(
+            reviewer=self.reviewer, article=self.article, score=1, opinion='Ok', is_published=True,
+        )
+        response = self.update(review, 'updatePublished')
+        self.assertEqual(response.status_code, 403)
+        review.refresh_from_db()
+        self.assertEqual(review.opinion, 'Ok')
+        self.assertFalse(review.versions.exists())
+
+    def test_editar_borrador_con_asignacion_funciona(self):
+        self.assign()
+        review = Review.objects.create(reviewer=self.reviewer, article=self.article, score=1, opinion='Ok')
+        self.assertEqual(self.update(review, 'updateDraft').status_code, 200)
+        review.refresh_from_db()
+        self.assertEqual(review.opinion, 'Cambiada')
+
+    # --- Acceso al formulario: GET /api/reviewer/articles/<id>/assignment/ ---
+
+    def assignment_url(self, article_id):
+        return f'/api/reviewer/articles/{article_id}/assignment/'
+
+    def test_acceso_con_asignacion_devuelve_200(self):
+        self.assign()
+        response = self.api_get(self.assignment_url(self.article.id))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'assigned': True})
+
+    def test_acceso_sin_asignacion_devuelve_403(self):
+        response = self.api_get(self.assignment_url(self.article.id))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), self.NOT_ASSIGNED)
+
+    def test_acceso_con_asignacion_borrada_devuelve_403(self):
+        self.assign(deleted=True)
+        self.assertEqual(self.api_get(self.assignment_url(self.article.id)).status_code, 403)
+
+    def test_acceso_usa_el_usuario_del_token(self):
+        # La asignación es del revisor: otro usuario logueado no tiene acceso
+        self.assign()
+        self.assertEqual(self.api_get(self.assignment_url(self.article.id), user=self.other).status_code, 403)
+
+    def test_acceso_a_articulo_inexistente_devuelve_404(self):
+        self.assertEqual(self.api_get(self.assignment_url(9999)).status_code, 404)
+
+    def test_acceso_sin_token_devuelve_401(self):
+        self.assertEqual(self.client.get(self.assignment_url(self.article.id)).status_code, 401)

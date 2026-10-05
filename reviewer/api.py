@@ -212,7 +212,9 @@ class ReviewUpdateDraftView(APIView):
         # se necesita modificar el middleware del login, user como objeto no solo el id.
         #if review.review_assignment.reviewer != request.user:
         #  return Response({"error": "Sin permisos"}, status=403)
-        
+        if not has_active_assignment(review.reviewer, review.article):
+            return Response({"error": NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
+
         if review.is_published:
             return Response({"error": "Usa el endpoint para revisiones publicadas"}, status=400)
         
@@ -230,7 +232,9 @@ class ReviewUpdatePublishedView(APIView):
         # se necesita modificar el middleware del login, user como objeto no solo el id.
         #if review.review_assignment.reviewer != request.user:
          #   return Response({"error": "Sin permisos"}, status=403)
-        
+        if not has_active_assignment(review.reviewer, review.article):
+            return Response({"error": NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
+
         if not review.is_published:
             return Response({"error": "Usa el endpoint para borradores"}, status=400)
         
@@ -445,3 +449,18 @@ class ReviewerConferencesView(APIView):
             for c in conferences
         ]
         return Response({'results': results}, status=status.HTTP_200_OK)
+
+
+# GET /api/reviewer/articles/{article_id}/assignment/
+# Indica si el usuario logueado puede revisar el artículo (tiene una asignación vigente)
+class ReviewerArticleAssignmentView(APIView):
+    def get(self, request, article_id):
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return Response({'error': 'Usuario no autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not Article.objects.filter(id=article_id).exists():
+            return Response({'error': 'Artículo no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        if not has_active_assignment(user_id, article_id):
+            return Response({'error': NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
+        return Response({'assigned': True}, status=status.HTTP_200_OK)
