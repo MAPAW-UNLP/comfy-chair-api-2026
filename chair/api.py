@@ -6,11 +6,13 @@ from chair.models import ReviewAssignment
 from conference_session.models import Session
 from reviewer.models import Bid, Review
 from chair.serializers import ReviewAssignmentSerializer
-from article.models import Article
+from article.models import Article, ArticleHistory
 from user.models import User
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db.models import Count
+from django.db import transaction
+from .helper import createHistoryEvent
 
 class ChairAPI(APIView):
     def get(self, request):
@@ -21,18 +23,25 @@ class CreateReviewAssignmentAPI(APIView):
     def post(self, request):
         reviewer_id = request.data.get("reviewer")
         article_id = request.data.get("article")
-
+        actor_id = request.data.get("assigned_by")  # TODO: Deuda técnica - migrar a request.user.id con JWT
+        
         if not reviewer_id or not article_id:
             # Mensaje en español, pero estructura en inglés
             return JsonResponse(
                 {"error": "Reviewer y Article son requeridos."}, status=400
             )
-
-        assignment, created = ReviewAssignment.objects.update_or_create(
-            reviewer_id=reviewer_id,
-            article_id=article_id,
-            defaults={"deleted": False},
-        )
+        with transaction.atomic():
+            assignment, created = ReviewAssignment.objects.update_or_create(
+                reviewer_id=reviewer_id,
+                article_id=article_id,
+                defaults={"deleted": False},
+            )
+            ArticleHistory.objects.create(
+                article_id= article_id,
+                reviewed_by_id= reviewer_id,
+                event_type='reviewer_assigned',
+                created_by_id=actor_id
+            )
 
         serializer = ReviewAssignmentSerializer(assignment)
         return JsonResponse(serializer.data, status=201 if created else 200)
@@ -159,12 +168,9 @@ class CutoffSelectionAPI(APIView):
                 {'message': 'La sesión no tiene artículos asociados.'},
                 status=400
             )
-        articles = (
-            Article.objects.filter(session=session)
-            .annotate(avg_score=Avg("review__score"))
-            .exclude(avg_score=None)
-            .order_by("-avg_score")
-        )
+
+        articles = Article.objects.fully_reviewed_by_session(session)
+        
         if not articles.exists():
             return JsonResponse(
                 {'message': 'No hay artículos con puntajes disponibles para esta sesión.'},
@@ -177,10 +183,13 @@ class CutoffSelectionAPI(APIView):
         
         accepted_articles = articles[:cutoff_index]
         rejected_articles = articles[cutoff_index:]
-        
+
         Article.objects.filter(id__in=[a.id for a in accepted_articles]).update(status="accepted")
         Article.objects.filter(id__in=[a.id for a in rejected_articles]).update(status="rejected")
-        
+
+        #Crea evento en el historial.
+        createHistoryEvent(accepted_articles, rejected_articles)
+                
         response_data = {
             "session": session.title,
             "capacity": session.capacity,
@@ -241,20 +250,15 @@ class ScoreThresholdSelectionAPI(APIView):
             session = Session.objects.get(id=session_id)
         except Session.DoesNotExist:
             return JsonResponse({"error": "Sesión no encontrada."}, status=404)
-
-        # Verificar si tiene artículos
-        articles = (
-            Article.objects.filter(session=session)
-            .annotate(avg_score=Avg("review__score"))
-            .exclude(avg_score=None)
-        )
+        
+        articles = Article.objects.fully_reviewed_by_session(session)
 
         if not articles.exists():
             return JsonResponse(
                 {"message": "No hay artículos con puntajes disponibles para esta sesión."},
                 status=200
             )
-
+        
         # Seleccionar según el valor de corte
         accepted_articles = articles.filter(avg_score__gt=cutoff_score)
         rejected_articles = articles.exclude(avg_score__gt=cutoff_score)
@@ -263,6 +267,9 @@ class ScoreThresholdSelectionAPI(APIView):
         Article.objects.filter(id__in=[a.id for a in accepted_articles]).update(status="accepted")
         Article.objects.filter(id__in=[a.id for a in rejected_articles]).update(status="rejected")
 
+        #Crea evento en el historial
+        createHistoryEvent(accepted_articles, rejected_articles)
+                
         # Preparar respuesta
         response_data = {
             "session": session.title,

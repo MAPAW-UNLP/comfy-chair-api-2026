@@ -1,14 +1,14 @@
 from rest_framework import status
+from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404
-from article.models import Article, ArticleDeletionRequest
+from article.models import Article, ArticleDeletionRequest, ArticleHistory
 from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer
 
 # --- Endpoints para el modelo Article ---
 class ArticleViewSet(viewsets.ModelViewSet):
-
     queryset = Article.objects.all()
     serializer_class = ArticleSerializer
 
@@ -29,7 +29,15 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        self.perform_create(serializer)
+        with transaction.atomic():
+            self.perform_create(serializer)
+            created_article = serializer.instance
+            author = created_article.corresponding_author
+            ArticleHistory.objects.create(
+                article=created_article,
+                event_type='submitted',
+                created_by_id=author.id,
+            )
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     

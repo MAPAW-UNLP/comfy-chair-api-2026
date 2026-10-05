@@ -8,6 +8,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from reviewer.models import Review, Article, Bid, ReviewVersion, User
+from article.models import ArticleHistory
 from chair.models import ReviewAssignment
 from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer
 
@@ -178,14 +179,20 @@ class ReviewPublishView(APIView):
             review.is_published = True
             review.created_at = timezone.now()  
             review.save()
-           #Creo la primera version 
+            #Creo la primera version 
             ReviewVersion.objects.create(
                 review=review,
                 version_number=1,
                 score=review.score,
                 opinion=review.opinion,           
                 )
-        
+            
+            #Historial
+            ArticleHistory.objects.create(
+                created_by= review.reviewer,
+                event_type= 'review_received',
+                article=review.article,
+            )
      
         serializer = ReviewSerializer(review)
         return Response(serializer.data, status=status.HTTP_200_OK)
