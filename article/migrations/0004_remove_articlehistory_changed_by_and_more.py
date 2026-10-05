@@ -3,12 +3,40 @@
 from django.db import migrations
 
 
+def rename_legacy_columns(apps, schema_editor):
+    history = apps.get_model('article', 'ArticleHistory')
+    table = history._meta.db_table
+    connection = schema_editor.connection
+
+    with connection.cursor() as cursor:
+        columns = {
+            column.name
+            for column in connection.introspection.get_table_description(cursor, table)
+        }
+
+    for old, new in (
+        ('changed_by_id', 'created_by_id'),
+        ('target_user_id', 'reviewed_by_id'),
+    ):
+        if new in columns:
+            continue
+        if old not in columns:
+            raise RuntimeError(f'Missing both {old} and {new} on {table}')
+        schema_editor.execute(
+            f'ALTER TABLE {schema_editor.quote_name(table)} '
+            f'RENAME COLUMN {schema_editor.quote_name(old)} '
+            f'TO {schema_editor.quote_name(new)}'
+        )
+        columns.remove(old)
+        columns.add(new)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
         ('article', '0003_articlehistory'),
     ]
 
-    # 0003 already creates created_by and reviewed_by. Keep this migration so
-    # databases that previously recorded 0004 retain a continuous history.
-    operations = []
+    # Fresh databases already have the new columns from 0003. Databases that
+    # applied an earlier local version of 0003 may still have the old columns.
+    operations = [migrations.RunPython(rename_legacy_columns, migrations.RunPython.noop)]
