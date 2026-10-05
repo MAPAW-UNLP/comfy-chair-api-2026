@@ -81,12 +81,22 @@ class ReviewerDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+NOT_ASSIGNED_ERROR = "No estás asignado para revisar este artículo"
+
+
+def has_active_assignment(reviewer, article):
+    # Una asignación borrada por el chair (deleted=True) no habilita a revisar
+    return ReviewAssignment.objects.filter(reviewer=reviewer, article=article, deleted=False).exists()
+
+
 #POST /api/reviews/
 #Guarda una nueva revisión en borrador
 class ReviewView(APIView):
     def post(self, request):
         serializer = ReviewSerializer(data = request.data)
-        if serializer.is_valid():   
+        if serializer.is_valid():
+            if not has_active_assignment(serializer.validated_data['reviewer'], serializer.validated_data['article']):
+                return Response({"error": NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -165,15 +175,16 @@ class ReviewPublishView(APIView):
         with transaction.atomic():
             try:
                 assignment = ReviewAssignment.objects.get(
-                    reviewer=review.reviewer,                    
-                    article=review.article
+                    reviewer=review.reviewer,
+                    article=review.article,
+                    deleted=False
                 )
                 assignment.reviewed = True
                 assignment.save()
             except ReviewAssignment.DoesNotExist:
                 return Response(
-                    {"error": "No se encontró la asignación de revisión"},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {"error": NOT_ASSIGNED_ERROR},
+                    status=status.HTTP_403_FORBIDDEN
                 )
             
             # Publicar la revisión

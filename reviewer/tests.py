@@ -13,7 +13,7 @@ from chair.models import ReviewAssignment
 from conference.models import Conference
 from conference_session.models import Session
 from notification.models import Notification
-from reviewer.models import ReviewerInvitation
+from reviewer.models import Review, ReviewerInvitation
 from user.models import User
 
 
@@ -703,3 +703,70 @@ class ReviewerInvitationNotificationTests(ReviewerTestCase):
         response = self.api_get('/notifications/')
         self.assertEqual(response.status_code, 200)
         self.assertIn(self.TITLE, [n['title'] for n in response.json()])
+
+
+# Solo un revisor con una asignación vigente puede crear y publicar una revisión
+class ReviewAssignmentRequiredTests(ReviewerTestCase):
+    NOT_ASSIGNED = {'error': 'No estás asignado para revisar este artículo'}
+
+    def setUp(self):
+        super().setUp()
+        conference = make_conference('CACIC')
+        session = Session.objects.create(
+            conference=conference, title='Sesión 1', deadline=conference.start_date, capacity=10,
+        )
+        self.article = Article.objects.create(
+            title='Artículo', main_file='articles/test.pdf', type='regular',
+            abstract='Resumen', session=session, corresponding_author=self.chair,
+        )
+
+    def assign(self, deleted=False):
+        return ReviewAssignment.objects.create(reviewer=self.reviewer, article=self.article, deleted=deleted)
+
+    def create_review(self):
+        return self.api_post('/api/reviews/', {
+            'reviewer': self.reviewer.id, 'article': self.article.id, 'score': 2, 'opinion': 'Buen artículo',
+        })
+
+    def publish(self, review):
+        return self.client.put(f'/api/reviews/{review.id}/publish/', **auth_header(self.reviewer))
+
+    def test_crear_revision_sin_asignacion_devuelve_403_y_no_guarda_nada(self):
+        response = self.create_review()
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), self.NOT_ASSIGNED)
+        self.assertFalse(Review.objects.exists())
+
+    def test_crear_revision_con_asignacion_borrada_devuelve_403(self):
+        self.assign(deleted=True)
+        self.assertEqual(self.create_review().status_code, 403)
+        self.assertFalse(Review.objects.exists())
+
+    def test_crear_revision_con_asignacion_funciona(self):
+        self.assign()
+        self.assertEqual(self.create_review().status_code, 201)
+        self.assertEqual(Review.objects.count(), 1)
+
+    def test_publicar_sin_asignacion_devuelve_403_y_no_publica(self):
+        review = Review.objects.create(reviewer=self.reviewer, article=self.article, score=1, opinion='Ok')
+        response = self.publish(review)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), self.NOT_ASSIGNED)
+        review.refresh_from_db()
+        self.assertFalse(review.is_published)
+
+    def test_publicar_con_asignacion_borrada_devuelve_403(self):
+        self.assign(deleted=True)
+        review = Review.objects.create(reviewer=self.reviewer, article=self.article, score=1, opinion='Ok')
+        self.assertEqual(self.publish(review).status_code, 403)
+        review.refresh_from_db()
+        self.assertFalse(review.is_published)
+
+    def test_publicar_con_asignacion_funciona_y_marca_revisado(self):
+        assignment = self.assign()
+        review = Review.objects.create(reviewer=self.reviewer, article=self.article, score=1, opinion='Ok')
+        self.assertEqual(self.publish(review).status_code, 200)
+        review.refresh_from_db()
+        assignment.refresh_from_db()
+        self.assertTrue(review.is_published)
+        self.assertTrue(assignment.reviewed)
