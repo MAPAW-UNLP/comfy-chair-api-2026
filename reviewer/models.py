@@ -6,6 +6,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from article.models import Article
 from chair.models import ReviewAssignment
 from conference.models import Conference
+from notification.models import Notification
 from user.models import User
 
 class BaseReview(models.Model):
@@ -94,3 +95,9 @@ class ReviewerInvitation(models.Model):
 
     def is_expired(self):
         return self.status == "pending" and self.expires_at is not None and self.expires_at < timezone.now()
+
+
+# Notificación de una invitación: hereda de Notification (sigue apareciendo en /notifications/
+# sin cambiar ese modelo) y agrega la invitación, para poder aceptarla o rechazarla desde ahí.
+class InvitationNotification(Notification):
+    invitation = models.ForeignKey(ReviewerInvitation, on_delete=models.CASCADE, related_name="notifications")

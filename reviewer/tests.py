@@ -13,7 +13,7 @@ from chair.models import ReviewAssignment
 from conference.models import Conference
 from conference_session.models import Session
 from notification.models import Notification
-from reviewer.models import Review, ReviewerInvitation
+from reviewer.models import Bid, InvitationNotification, Review, ReviewerInvitation
 from user.models import User
 
 
@@ -704,6 +704,49 @@ class ReviewerInvitationNotificationTests(ReviewerTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(self.TITLE, [n['title'] for n in response.json()])
 
+    # --- Notificación ligada a su invitación (aceptar/rechazar desde la notificación) ---
+
+    LINKS_URL = '/api/reviewer/invitation-notifications/'
+
+    def test_la_notificacion_conoce_su_invitacion(self):
+        invitation = self.invite(make_conference('CACIC'))
+        link = InvitationNotification.objects.get(user=self.reviewer)
+        self.assertEqual(link.invitation, invitation)
+        # Sigue siendo una Notification: la misma fila aparece en /notifications/
+        self.assertTrue(Notification.objects.filter(id=link.id, title=self.TITLE).exists())
+
+    def test_endpoint_lista_notificaciones_de_invitacion_con_su_estado(self):
+        pending = self.invite(make_conference('Pendiente'))
+        expired = self.invite(make_conference('Vencida'), expires_at=timezone.now() - timedelta(days=1))
+        response = self.api_get(self.LINKS_URL)
+        self.assertEqual(response.status_code, 200)
+        by_invitation = {r['invitation']: r for r in response.json()['results']}
+        self.assertEqual(by_invitation[pending.id]['status'], 'pending')
+        self.assertEqual(by_invitation[expired.id]['status'], 'expired')
+        self.assertEqual(by_invitation[pending.id]['conference_title'], 'Pendiente')
+        self.assertEqual(
+            by_invitation[pending.id]['notification'],
+            InvitationNotification.objects.get(invitation=pending).id,
+        )
+
+    def test_endpoint_refleja_la_respuesta(self):
+        invitation = self.invite(make_conference('CACIC'))
+        self.api_post(self.invitation_url(invitation.id, 'accept'))
+        self.assertEqual(self.api_get(self.LINKS_URL).json()['results'][0]['status'], 'accepted')
+
+    def test_endpoint_solo_devuelve_las_propias_y_no_otras_notificaciones(self):
+        self.invite(make_conference('Ajena'), reviewer=self.other)
+        Notification.objects.create(user=self.reviewer, title='Otra cosa', message='...')
+        self.assertEqual(self.api_get(self.LINKS_URL).json()['results'], [])
+
+    def test_endpoint_sin_token_devuelve_401(self):
+        self.assertEqual(self.client.get(self.LINKS_URL).status_code, 401)
+
+    def test_borrar_la_invitacion_borra_su_notificacion(self):
+        invitation = self.invite(make_conference('CACIC'))
+        invitation.delete()
+        self.assertFalse(Notification.objects.filter(user=self.reviewer, title=self.TITLE).exists())
+
 
 # Solo un revisor con una asignación vigente puede crear y publicar una revisión
 class ReviewAssignmentRequiredTests(ReviewerTestCase):
@@ -834,3 +877,90 @@ class ReviewAssignmentRequiredTests(ReviewerTestCase):
 
     def test_acceso_sin_token_devuelve_401(self):
         self.assertEqual(self.client.get(self.assignment_url(self.article.id)).status_code, 401)
+
+
+# Conflicto de interés: un autor no puede ser asignado ni revisar su propio artículo
+class AuthorConflictTests(ReviewerTestCase):
+    AUTHOR_CANNOT_REVIEW = {'error': 'No podés revisar un artículo del que sos autor'}
+    AUTHOR_CANNOT_BE_ASSIGNED = {'error': 'No se puede asignar a un autor como revisor de su propio artículo'}
+
+    def setUp(self):
+        super().setUp()
+        conference = make_conference('CACIC')
+        session = Session.objects.create(
+            conference=conference, title='Sesión 1', deadline=conference.start_date, capacity=10,
+        )
+        # El revisor es coautor; el autor de notificación es otro usuario
+        self.article = Article.objects.create(
+            title='Artículo', main_file='articles/test.pdf', type='regular',
+            abstract='Resumen', session=session, corresponding_author=self.other,
+        )
+        self.article.authors.add(self.reviewer, self.other)
+
+    def assign_anyway(self, reviewer=None):
+        # Una asignación que ya existía antes de este control (o creada por fuera de la API)
+        return ReviewAssignment.objects.create(reviewer=reviewer or self.reviewer, article=self.article)
+
+    # --- Revisión (app reviewer) ---
+
+    def test_autor_asignado_no_puede_crear_revision(self):
+        self.assign_anyway()
+        response = self.api_post('/api/reviews/', {
+            'reviewer': self.reviewer.id, 'article': self.article.id, 'score': 3, 'opinion': 'Excelente',
+        })
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), self.AUTHOR_CANNOT_REVIEW)
+        self.assertFalse(Review.objects.exists())
+
+    def test_autor_asignado_no_puede_publicar_ni_editar(self):
+        self.assign_anyway()
+        review = Review.objects.create(reviewer=self.reviewer, article=self.article, score=3, opinion='Ok')
+        headers = auth_header(self.reviewer)
+        publish = self.client.put(f'/api/reviews/{review.id}/publish/', **headers)
+        draft = self.client.put(
+            f'/api/reviews/{review.id}/updateDraft/', {'opinion': 'Cambiada'},
+            content_type='application/json', **headers,
+        )
+        self.assertEqual(publish.status_code, 403)
+        self.assertEqual(publish.json(), self.AUTHOR_CANNOT_REVIEW)
+        self.assertEqual(draft.status_code, 403)
+        review.refresh_from_db()
+        self.assertFalse(review.is_published)
+        self.assertEqual(review.opinion, 'Ok')
+
+    def test_autor_asignado_no_accede_al_formulario(self):
+        self.assign_anyway()
+        response = self.api_get(f'/api/reviewer/articles/{self.article.id}/assignment/')
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), self.AUTHOR_CANNOT_REVIEW)
+
+    def test_autor_de_notificacion_tambien_cuenta_como_autor(self):
+        # self.other es corresponding_author (y coautor); se prueba solo como autor de notificación
+        self.article.authors.remove(self.other)
+        self.assign_anyway(reviewer=self.other)
+        response = self.api_get(f'/api/reviewer/articles/{self.article.id}/assignment/', user=self.other)
+        self.assertEqual(response.json(), self.AUTHOR_CANNOT_REVIEW)
+
+    # --- Asignación (app chair) ---
+
+    def test_chair_no_puede_asignar_a_un_autor(self):
+        response = self.api_post('/api/chair/new/', {'reviewer': self.reviewer.id, 'article': self.article.id}, user=self.chair)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json(), self.AUTHOR_CANNOT_BE_ASSIGNED)
+        self.assertFalse(ReviewAssignment.objects.exists())
+
+    def test_chair_puede_asignar_a_quien_no_es_autor(self):
+        outsider = make_user('externo@test.com', 'Revisor externo')
+        response = self.api_post('/api/chair/new/', {'reviewer': outsider.id, 'article': self.article.id}, user=self.chair)
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(ReviewAssignment.objects.filter(reviewer=outsider, article=self.article).exists())
+
+    def test_los_autores_no_aparecen_como_revisores_disponibles(self):
+        outsider = make_user('externo@test.com', 'Revisor externo')
+        Bid.objects.create(reviewer=self.reviewer, article=self.article, choice='Interesado')
+        response = self.api_get(f'/api/chair/articles/{self.article.id}/available-reviewers/', user=self.chair)
+        self.assertEqual(response.status_code, 200)
+        ids = {r['id'] for r in response.json()}
+        self.assertNotIn(self.reviewer.id, ids)  # autor con bid
+        self.assertNotIn(self.other.id, ids)  # autor sin bid
+        self.assertIn(outsider.id, ids)

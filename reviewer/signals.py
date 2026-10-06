@@ -2,12 +2,12 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 
-from notification.models import Notification
-from reviewer.models import ReviewerInvitation
+from reviewer.models import InvitationNotification, ReviewerInvitation
 
 
 # Notifica al usuario cuando recibe una invitación para ser revisor de una conferencia.
-# Se responde desde Revisor → Invitaciones.
+# Es una InvitationNotification (hereda de Notification): se ve en /notifications/ como las demás
+# y, como conoce su invitación, permite aceptarla o rechazarla desde la notificación.
 @receiver(post_save, sender=ReviewerInvitation)
 def reviewer_invitation_created_notification(sender, instance, created, **kwargs):
     if not created:
@@ -18,12 +18,13 @@ def reviewer_invitation_created_notification(sender, instance, created, **kwargs
         f" Tenés tiempo de responder hasta el {timezone.localtime(instance.expires_at).strftime('%d/%m/%Y %H:%M')}."
         if instance.expires_at else ''
     )
-    Notification.objects.create(
+    InvitationNotification.objects.create(
+        invitation=instance,
         user=instance.reviewer,
         title="Nueva invitación para revisar",
         message=(
             f"{invited_by} te invitó a formar parte del comité de revisores de la conferencia "
-            f"'{instance.conference.title}'.{deadline} Podés aceptarla o rechazarla desde Revisor → Invitaciones."
+            f"'{instance.conference.title}'.{deadline} Podés aceptarla o rechazarla desde esta notificación o desde Revisor → Invitaciones."
         ),
         type="info",
     )

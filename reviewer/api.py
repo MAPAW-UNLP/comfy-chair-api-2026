@@ -8,9 +8,10 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from django.db.models import Case, Exists, F, OuterRef, Q, Value, When
-from reviewer.models import Review, Article, Bid, ReviewVersion, User, ReviewerInvitation
+from reviewer.models import Review, Article, Bid, ReviewVersion, User, ReviewerInvitation, InvitationNotification
 from chair.models import ReviewAssignment
 from conference.models import Conference
+from reviewer.conflicts import AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
 from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer, ReviewerInvitationSerializer, ReviewerInvitationDetailSerializer, RejectInvitationSerializer
 
 # # GET /api/articles
@@ -89,14 +90,24 @@ def has_active_assignment(reviewer, article):
     return ReviewAssignment.objects.filter(reviewer=reviewer, article=article, deleted=False).exists()
 
 
+def review_forbidden_reason(reviewer, article):
+    # Motivo por el que el usuario no puede revisar el artículo, o None si puede
+    if is_article_author(reviewer, article):
+        return AUTHOR_CANNOT_REVIEW_ERROR
+    if not has_active_assignment(reviewer, article):
+        return NOT_ASSIGNED_ERROR
+    return None
+
+
 #POST /api/reviews/
 #Guarda una nueva revisión en borrador
 class ReviewView(APIView):
     def post(self, request):
         serializer = ReviewSerializer(data = request.data)
         if serializer.is_valid():
-            if not has_active_assignment(serializer.validated_data['reviewer'], serializer.validated_data['article']):
-                return Response({"error": NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
+            reason = review_forbidden_reason(serializer.validated_data['reviewer'], serializer.validated_data['article'])
+            if reason:
+                return Response({"error": reason}, status=status.HTTP_403_FORBIDDEN)
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -171,6 +182,9 @@ class ReviewPublishView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        if is_article_author(review.reviewer, review.article):
+            return Response({"error": AUTHOR_CANNOT_REVIEW_ERROR}, status=status.HTTP_403_FORBIDDEN)
+
         # Usar transacción atómica para garantizar consistencia
         with transaction.atomic():
             try:
@@ -212,8 +226,9 @@ class ReviewUpdateDraftView(APIView):
         # se necesita modificar el middleware del login, user como objeto no solo el id.
         #if review.review_assignment.reviewer != request.user:
         #  return Response({"error": "Sin permisos"}, status=403)
-        if not has_active_assignment(review.reviewer, review.article):
-            return Response({"error": NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
+        reason = review_forbidden_reason(review.reviewer, review.article)
+        if reason:
+            return Response({"error": reason}, status=status.HTTP_403_FORBIDDEN)
 
         if review.is_published:
             return Response({"error": "Usa el endpoint para revisiones publicadas"}, status=400)
@@ -232,8 +247,9 @@ class ReviewUpdatePublishedView(APIView):
         # se necesita modificar el middleware del login, user como objeto no solo el id.
         #if review.review_assignment.reviewer != request.user:
          #   return Response({"error": "Sin permisos"}, status=403)
-        if not has_active_assignment(review.reviewer, review.article):
-            return Response({"error": NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
+        reason = review_forbidden_reason(review.reviewer, review.article)
+        if reason:
+            return Response({"error": reason}, status=status.HTTP_403_FORBIDDEN)
 
         if not review.is_published:
             return Response({"error": "Usa el endpoint para borradores"}, status=400)
@@ -451,6 +467,33 @@ class ReviewerConferencesView(APIView):
         return Response({'results': results}, status=status.HTTP_200_OK)
 
 
+# GET /api/reviewer/invitation-notifications/
+# Qué notificaciones del usuario son de invitaciones, a qué invitación apuntan y su estado
+# (el front muestra Aceptar/Rechazar en las pendientes)
+class InvitationNotificationsView(APIView):
+    def get(self, request):
+        user_id = getattr(request, 'user_id', None)
+        if not user_id:
+            return Response({'error': 'Usuario no autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        notifications = (
+            InvitationNotification.objects
+            .filter(user_id=user_id)
+            .select_related('invitation__conference')
+            .order_by('-created_at')
+        )
+        results = [
+            {
+                'notification': n.id,
+                'invitation': n.invitation_id,
+                'status': 'expired' if n.invitation.is_expired() else n.invitation.status,
+                'conference_title': n.invitation.conference.title,
+            }
+            for n in notifications
+        ]
+        return Response({'results': results}, status=status.HTTP_200_OK)
+
+
 # GET /api/reviewer/articles/{article_id}/assignment/
 # Indica si el usuario logueado puede revisar el artículo (tiene una asignación vigente)
 class ReviewerArticleAssignmentView(APIView):
@@ -461,6 +504,7 @@ class ReviewerArticleAssignmentView(APIView):
 
         if not Article.objects.filter(id=article_id).exists():
             return Response({'error': 'Artículo no encontrado'}, status=status.HTTP_404_NOT_FOUND)
-        if not has_active_assignment(user_id, article_id):
-            return Response({'error': NOT_ASSIGNED_ERROR}, status=status.HTTP_403_FORBIDDEN)
+        reason = review_forbidden_reason(user_id, article_id)
+        if reason:
+            return Response({'error': reason}, status=status.HTTP_403_FORBIDDEN)
         return Response({'assigned': True}, status=status.HTTP_200_OK)
