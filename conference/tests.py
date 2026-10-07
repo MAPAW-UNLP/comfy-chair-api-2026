@@ -182,6 +182,30 @@ class ConferenceUsersActionTests(TestCase):
             [matching_author.pk],
         )
 
+    def test_search_filters_by_email_case_insensitively(self):
+        matching_author = self.create_user(
+            'ana.perez@example.com',
+            full_name='Ana Pérez',
+        )
+        non_matching_author = self.create_user(
+            'luis.gomez@example.com',
+            full_name='Luis Gómez',
+        )
+        session = self.create_session(self.conference, 'Session A')
+        self.create_article(session, 'Article A', matching_author)
+        self.create_article(session, 'Article B', non_matching_author)
+
+        response = self.client.get(
+            reverse('conference-users', kwargs={'pk': self.conference.pk}),
+            {'search': '  ANA.PEREZ@EXAMPLE.COM  '},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [user['id'] for user in response.data['users']],
+            [matching_author.pk],
+        )
+
     def test_role_filter_returns_matching_users_with_all_their_roles(self):
         multi_role_user = self.create_user(
             'multi-role@example.com',

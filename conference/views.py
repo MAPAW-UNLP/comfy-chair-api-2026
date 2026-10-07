@@ -2,6 +2,7 @@ from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
+from django.db.models import Q
 from .models import Conference
 from .serializers import ConferenceSerializer
 from django.utils import timezone
@@ -52,7 +53,10 @@ class ConferenceViewSet(viewsets.ModelViewSet):
         for user_role, users in role_querysets:
             users = users.filter(deleted=False, is_active=True)
             if search:
-                users = users.filter(full_name__icontains=search)
+                users = users.filter(
+                    Q(full_name__icontains=search) |
+                    Q(email__icontains=search)
+                )
 
             for user in users.order_by('full_name', 'id'):
                 user_data = users_by_id.setdefault(user.id, {
