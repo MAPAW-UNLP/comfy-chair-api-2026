@@ -5,12 +5,18 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404
 from article.models import Article, ArticleDeletionRequest, ArticleHistory
-from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer
+from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer
 
 # --- Endpoints para el modelo Article ---
 class ArticleViewSet(viewsets.ModelViewSet):
     queryset = Article.objects.all()
     serializer_class = ArticleSerializer
+
+    @action(detail=True, methods=['get'])
+    def history(self, request, pk=None):
+        article = self.get_object()
+        events = article.history_events.order_by('created_at', 'id')
+        return Response(ArticleHistorySerializer(events, many=True).data)
     
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para el alta de un articulo

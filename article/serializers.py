@@ -36,13 +36,24 @@ class ArticleSerializer(serializers.ModelSerializer):
 
 
 class ArticleHistorySerializer(serializers.ModelSerializer):
+    verdict = serializers.SerializerMethodField()
+
     class Meta:
         model = ArticleHistory
-        fields = [
-            'id', 'article', 'event_type', 'metadata',
-            'created_by', 'reviewed_by', 'created_at',
-        ]
+        fields = ['event_type', 'created_at', 'verdict']
         read_only_fields = fields
+
+    def get_verdict(self, event):
+        if event.event_type != 'final_verdict' or not isinstance(event.metadata, dict):
+            return None
+        verdict = event.metadata.get('status')
+        return verdict if verdict in ('accepted', 'rejected') else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        if data['verdict'] is None:
+            data.pop('verdict')
+        return data
 
 
 # --- Serializer para ArticleDeletionRequest ---
