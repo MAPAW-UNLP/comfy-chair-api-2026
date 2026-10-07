@@ -51,7 +51,4 @@ def verificar_deadlines():
                         type="info",
                     )
                     #print(f"[Notificación creada] Autor: {autor.full_name} - Artículo: {articulo.title}")
-            else:
-                print(f"[Fuera de rango] {articulo.title} - Deadline {deadline_aware}")
-
         time.sleep(10)
