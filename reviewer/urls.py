@@ -17,6 +17,6 @@ urlpatterns = [
     path('reviews/<int:id>/publish/', ReviewPublishView.as_view(), name='review-publish'),
     path('article/<int:article_id>/reviews/',ReviewsArticleView.as_view(),name="reviews-article"),
     path('reviews/<int:articleId>/<int:reviewerId>/', ReviewByReviewerView.as_view(), name='review-by-reviewer'),
-    path('assignments/', ReviewerAssignmentsView.as_view(), name='reviewer-assignments'),
+    path('reviewer/assignments/', ReviewerAssignmentsView.as_view(), name='reviewer-assignments'),
 
 ]

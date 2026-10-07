@@ -17,6 +17,10 @@ class ReviewerAssignmentsTests(ReviewerTestCase):
 
     # ---------- utilidades ----------
 
+    def test_la_ruta_coincide_con_el_contrato(self):
+        # El front llama a esta dirección exacta: si cambia, el dashboard da 404.
+        self.assertEqual(self.url, "/api/reviewer/assignments/")
+
     def asignar(self, sesion=None, revisor=None):
         """Crea un artículo (en la sesión dada, o sin sesión) y se lo asigna."""
         articulo = self.crear_articulo(sesion=sesion, con_sesion=False)
