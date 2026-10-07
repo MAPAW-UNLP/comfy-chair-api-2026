@@ -48,6 +48,11 @@ class Bid(models.Model):
         blank=True
     )
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["reviewer", "article"], name="unique_bid_per_reviewer_article")
+        ]
+
 
 class ReviewerInvitationQuerySet(models.QuerySet):
     def with_effective_status(self):
