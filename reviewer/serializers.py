@@ -105,40 +105,48 @@ class ReviewerDetailSerializer(serializers.ModelSerializer):
 class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
-        fields = ['id','score','opinion','created_at','updated_at','reviewer','article','is_published']
+        fields = ['id', 'score', 'opinion', 'chair_comments', 'created_at', 'updated_at', 'reviewer', 'article', 'is_published']
+
 
 class ReviewUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
-        fields = ['score','opinion', 'updated_at','is_published']  
+        fields = ['score', 'opinion', 'chair_comments', 'updated_at', 'is_published']
 
 
 class ReviewVersionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReviewVersion
-        fields = ['id','review','version_number','score','opinion','created_at']
+        fields = ['id', 'review', 'version_number', 'score', 'opinion', 'chair_comments', 'created_at']
+
+
+class PublicReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = ['id', 'article', 'reviewer', 'score', 'opinion', 'created_at', 'updated_at']
+
 
 class AssignmentArticleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Article
         fields = ['id', 'title', 'type', 'status']
- 
- 
+
+
 class AssignmentSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Session
         fields = ['id', 'title']
- 
- 
+
+
 class AssignmentConferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conference
         fields = ['id', 'title']
- 
- 
+
+
 class ReviewerAssignmentSerializer(serializers.ModelSerializer):
     """Una asignación del revisor, con su estado de revisión.
- 
+
     Solo lectura y con lista explícita de campos: no devuelve el contenido de
     la review (opinion, score, chair_comments). Necesita en el contexto
     {"reviews": {article_id: Review}} con las reviews del propio revisor.
@@ -149,37 +157,37 @@ class ReviewerAssignmentSerializer(serializers.ModelSerializer):
     review_id = serializers.SerializerMethodField()
     review_status = serializers.SerializerMethodField()
     review_period = serializers.SerializerMethodField()
- 
+
     class Meta:
         model = ReviewAssignment
         fields = [
             'article', 'session', 'conference',
             'review_id', 'review_status', 'review_period',
         ]
- 
+
     def _review(self, obj):
         return self.context['reviews'].get(obj.article_id)
- 
+
     def get_session(self, obj):
         sesion = obj.article.session
         return AssignmentSessionSerializer(sesion).data if sesion else None
- 
+
     def get_conference(self, obj):
         sesion = obj.article.session
         if not sesion:
             return None
         return AssignmentConferenceSerializer(sesion.conference).data
- 
+
     def get_review_id(self, obj):
         review = self._review(obj)
         return review.id if review else None
- 
+
     def get_review_status(self, obj):
         review = self._review(obj)
         if review is None:
             return 'pending'
         return 'published' if review.is_published else 'draft'
- 
+
     def get_review_period(self, obj):
         return review_window(obj.article.session)
 

@@ -14,6 +14,7 @@ class BaseReview(models.Model):
         validators=[MinValueValidator(-3), MaxValueValidator(3)]
     )
     opinion = models.TextField()
+    chair_comments = models.TextField(blank=True, default="")
 
     class Meta:
         abstract = True  
