@@ -26,3 +26,6 @@ db.sqlite3
 
 # MacOS
 .DS_Store
+
+#Seed
+seed_demo.py
