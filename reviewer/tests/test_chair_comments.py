@@ -1,15 +1,3 @@
-import tempfile
-from datetime import timedelta
-import jwt
-from django.conf import settings
-from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
-from django.utils import timezone
-from user.models import User
-from conference.models import Conference
-from conference_session.models import Session
-from article.models import Article
-from chair.models import ReviewAssignment
 from reviewer.models import Review, ReviewVersion
 from reviewer.serializers import (
     ReviewSerializer,
@@ -17,71 +5,25 @@ from reviewer.serializers import (
     ReviewVersionSerializer,
     PublicReviewSerializer,
 )
+from .base import ReviewerTestCase
 
 
-def auth(user):
-    token = jwt.encode(
-        {"user_id": user.id, "exp": timezone.now() + timedelta(hours=1)},
-        settings.SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM,
-    )
-    return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
-
-
-class ReviewerTestCase(TestCase):
+class ChairCommentsTestCase(ReviewerTestCase):
     def setUp(self):
-        self.reviewer = User.objects.create(
-            email="revisor@test.com",
-            full_name="Revisor Test",
-            affiliation="UNLP",
-            role="user",
-        )
-        self.other_reviewer = User.objects.create(
-            email="otro@test.com",
-            full_name="Otro Revisor",
-            affiliation="UNLP",
-            role="user",
-        )
-        self.author = User.objects.create(
-            email="autor@test.com",
-            full_name="Autor Test",
-            affiliation="UNLP",
-            role="user",
-        )
+        super().setUp()
+        self.reviewer = self.crear_usuario()
+        self.other_reviewer = self.crear_usuario()
+        self.author = self.crear_usuario()
+        self.conference = self.crear_conferencia()
+        self.session = self.crear_sesion(conferencia=self.conference)
+        self.article = self.crear_articulo(autor=self.author, sesion=self.session)
+        self.assignment = self.crear_asignacion(self.reviewer, self.article)
 
-        today = timezone.now().date()
-        self.conference = Conference.objects.create(
-            title="Conferencia Test 2026",
-            description="Descripción",
-            start_date=today - timedelta(days=5),
-            end_date=today + timedelta(days=20),
-        )
-
-        self.session = Session.objects.create(
-            title="Sesión 1",
-            conference=self.conference,
-            deadline=today + timedelta(days=10),
-            capacity=10,
-        )
-
-        with override_settings(MEDIA_ROOT=tempfile.mkdtemp()):
-            self.article = Article.objects.create(
-                title="Artículo Test",
-                abstract="Resumen",
-                corresponding_author=self.author,
-                session=self.session,
-                main_file=SimpleUploadedFile("manuscrito.pdf", b"%PDF-test-content"),
-            )
-
-        self.assignment = ReviewAssignment.objects.create(
-            reviewer=self.reviewer,
-            article=self.article,
-            reviewed=False,
-            deleted=False,
-        )
+    def auth(self, user):
+        return {"HTTP_AUTHORIZATION": f"Bearer {self.token_para(user)}"}
 
 
-class BaseReviewModelTests(ReviewerTestCase):
+class BaseReviewModelTests(ChairCommentsTestCase):
     def test_default_chair_comments_is_empty_string(self):
         """Issue 4.1-BE: Review y ReviewVersion almacenan '' por defecto en chair_comments"""
         review = Review.objects.create(
@@ -112,19 +54,27 @@ class BaseReviewModelTests(ReviewerTestCase):
         self.assertEqual(review.chair_comments, "Recomiendo premiar este trabajo")
 
 
-class ReviewSerializerTests(ReviewerTestCase):
+class ReviewSerializerTests(ChairCommentsTestCase):
     def test_serializers_include_chair_comments(self):
         """Issue 4.2-BE: Serializadores del dueño incluyen chair_comments"""
         review = Review.objects.create(
             reviewer=self.reviewer,
             article=self.article,
-            score=1,
-            opinion="Regular",
+            score=2,
+            opinion="Buena propuesta",
             chair_comments="Comentario confidencial",
         )
         data = ReviewSerializer(review).data
         self.assertIn("chair_comments", data)
         self.assertEqual(data["chair_comments"], "Comentario confidencial")
+
+        update_serializer = ReviewUpdateSerializer(
+            instance=review,
+            data={"chair_comments": "Comentario confidencial editado"},
+            partial=True,
+        )
+        self.assertTrue(update_serializer.is_valid(), update_serializer.errors)
+        self.assertIn("chair_comments", update_serializer.fields)
 
         version = ReviewVersion.objects.create(
             review=review,
@@ -154,7 +104,7 @@ class ReviewSerializerTests(ReviewerTestCase):
         self.assertIn("reviewer", data)
 
 
-class ReviewLifecycleAPITests(ReviewerTestCase):
+class ReviewLifecycleAPITests(ChairCommentsTestCase):
     def test_create_draft_with_chair_comments(self):
         """Issue 4.2-BE: POST /api/reviews/ guarda borrador con chair_comments"""
         url = "/api/reviews/"
@@ -164,7 +114,7 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
             "opinion": "Buen borrador",
             "chair_comments": "Comentario preliminar para el chair",
         }
-        res = self.client.post(url, payload, content_type="application/json", **auth(self.reviewer))
+        res = self.client.post(url, payload, content_type="application/json", **self.auth(self.reviewer))
         self.assertEqual(res.status_code, 201)
         self.assertEqual(res.data["chair_comments"], "Comentario preliminar para el chair")
 
@@ -183,7 +133,7 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
             "opinion": "Dudoso mejorado",
             "chair_comments": "Comentario actualizado",
         }
-        res = self.client.put(url, payload, content_type="application/json", **auth(self.reviewer))
+        res = self.client.put(url, payload, content_type="application/json", **self.auth(self.reviewer))
         self.assertEqual(res.status_code, 200)
         review.refresh_from_db()
         self.assertEqual(review.chair_comments, "Comentario actualizado")
@@ -199,7 +149,7 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
             is_published=False,
         )
         url = f"/api/reviews/{review.id}/publish/"
-        res = self.client.put(url, content_type="application/json", **auth(self.reviewer))
+        res = self.client.put(url, content_type="application/json", **self.auth(self.reviewer))
         self.assertEqual(res.status_code, 200)
 
         review.refresh_from_db()
@@ -236,7 +186,7 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
         payload = {
             "chair_comments": "Comentario v2 actualizado",
         }
-        res = self.client.put(url, payload, content_type="application/json", **auth(self.reviewer))
+        res = self.client.put(url, payload, content_type="application/json", **self.auth(self.reviewer))
         self.assertEqual(res.status_code, 200)
 
         review.refresh_from_db()
@@ -264,7 +214,7 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
             f"/api/reviews/{review.id}/updateDraft/",
             {"opinion": "Hack"},
             content_type="application/json",
-            **auth(self.other_reviewer),
+            **self.auth(self.other_reviewer),
         )
         self.assertEqual(res.status_code, 403)
 
@@ -272,7 +222,7 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
         res = self.client.put(
             f"/api/reviews/{review.id}/publish/",
             content_type="application/json",
-            **auth(self.other_reviewer),
+            **self.auth(self.other_reviewer),
         )
         self.assertEqual(res.status_code, 403)
 
@@ -280,7 +230,7 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
         self.client.put(
             f"/api/reviews/{review.id}/publish/",
             content_type="application/json",
-            **auth(self.reviewer),
+            **self.auth(self.reviewer),
         )
 
         # Intento de editar review publicada ajena -> 403
@@ -288,19 +238,19 @@ class ReviewLifecycleAPITests(ReviewerTestCase):
             f"/api/reviews/{review.id}/updatePublished/",
             {"opinion": "Hack v2"},
             content_type="application/json",
-            **auth(self.other_reviewer),
+            **self.auth(self.other_reviewer),
         )
         self.assertEqual(res.status_code, 403)
 
         # Intento de consultar versiones ajenas -> 403
         res = self.client.get(
             f"/api/reviews/{review.id}/versions/",
-            **auth(self.other_reviewer),
+            **self.auth(self.other_reviewer),
         )
         self.assertEqual(res.status_code, 403)
 
 
-class ConfidentialityLeakAuditTests(ReviewerTestCase):
+class ConfidentialityLeakAuditTests(ChairCommentsTestCase):
     def test_public_articles_reviews_endpoint_does_not_leak_chair_comments(self):
         """Issue 4.3-BE: /api/article/<id>/reviews/ NUNCA expone chair_comments ni strings secretos"""
         secret_marker = "SECRETO-CHAIR-9a4f"
@@ -314,7 +264,7 @@ class ConfidentialityLeakAuditTests(ReviewerTestCase):
         )
 
         url = f"/api/article/{self.article.id}/reviews/"
-        res = self.client.get(url, **auth(self.author))
+        res = self.client.get(url, **self.auth(self.author))
         self.assertEqual(res.status_code, 200)
 
         # Validar que no aparezca el campo ni el contenido secreto

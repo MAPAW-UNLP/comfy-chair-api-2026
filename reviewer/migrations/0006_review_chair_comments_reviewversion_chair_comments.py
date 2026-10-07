@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('reviewer', '0002_initial'),
+        ('reviewer', '0005_bid_unique_bid_per_reviewer_article'),
     ]
 
     operations = [
