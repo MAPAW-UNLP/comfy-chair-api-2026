@@ -10,6 +10,11 @@ from django.http import JsonResponse
 from reviewer.models import Review, Article, Bid, ReviewVersion, User
 from chair.models import ReviewAssignment
 from reviewer.serializers import ReviewUpdateSerializer, ReviewerDetailSerializer, BidSerializer, BidUpdateSerializer,ReviewSerializer,ReviewVersionSerializer
+from conference.periods import is_period_open
+
+
+def review_period_is_open(review):
+    return is_period_open(review.article.session, 'review') if review.article.session else True
 
 # # GET /api/articles
 # class ArticleListView(APIView):
@@ -84,7 +89,13 @@ class ReviewerDetailView(APIView):
 class ReviewView(APIView):
     def post(self, request):
         serializer = ReviewSerializer(data = request.data)
-        if serializer.is_valid():   
+        if serializer.is_valid():   # agrego validacion de periodo de review para la sesion del articulo grupo5
+            article = serializer.validated_data['article']
+            if article.session and not is_period_open(article.session, 'review'):
+                return Response(
+                    {"error": "El periodo de revisión está cerrado."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -135,6 +146,11 @@ class ReviewVersionsView(APIView):
 class ReviewPublishView(APIView):
       def put(self, request, id):
         review = get_object_or_404(Review, id=id)
+        if not review_period_is_open(review):
+            return Response(
+                {"error": "El periodo de revisión está cerrado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         # se necesita modificar el middleware del login, user como objeto no solo el id.      
         # Verificar que el usuario que modifica el estado es el autor
         #if review.review_assignment.reviewer != request.user:
@@ -196,6 +212,11 @@ class ReviewPublishView(APIView):
 class ReviewUpdateDraftView(APIView):
     def put(self, request, id):
         review = get_object_or_404(Review, id=id)
+        if not review_period_is_open(review):
+            return Response(
+                {"error": "El periodo de revisión está cerrado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         # se necesita modificar el middleware del login, user como objeto no solo el id.
         #if review.review_assignment.reviewer != request.user:
         #  return Response({"error": "Sin permisos"}, status=403)
@@ -214,6 +235,11 @@ class ReviewUpdateDraftView(APIView):
 class ReviewUpdatePublishedView(APIView):
     def put(self, request, id):
         review = get_object_or_404(Review, id=id)
+        if not review_period_is_open(review):
+            return Response(
+                {"error": "El periodo de revisión está cerrado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         # se necesita modificar el middleware del login, user como objeto no solo el id.
         #if review.review_assignment.reviewer != request.user:
          #   return Response({"error": "Sin permisos"}, status=403)

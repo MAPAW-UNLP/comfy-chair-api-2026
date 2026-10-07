@@ -13,6 +13,11 @@ class Session(models.Model):
         blank=False
     )
     capacity = models.IntegerField(null=False, blank=False)
+    # Ventanas opcionales; si faltan, se heredan de la conferencia.
+    submission_start = models.DateField(null=True, blank=True, default=None)
+    submission_end = models.DateField(null=True, blank=True, default=None)
+    review_start = models.DateField(null=True, blank=True, default=None)
+    review_end = models.DateField(null=True, blank=True, default=None)
     conference = models.ForeignKey(
         Conference, 
         on_delete=models.CASCADE, 
@@ -66,6 +71,8 @@ class Session(models.Model):
         return f"{self.title} ({self.conference.title})"
 
     def clean(self):
+        #dejo deadline por si algun grupo lo utiliza actualmente pero agrego la logica de validación de fechas de submission y review para la sesión /grupo5
+        super().clean()
         # Validar que el deadline esté dentro del rango de la conferencia
         if self.conference and self.deadline:
             start = self.conference.start_date
@@ -73,6 +80,17 @@ class Session(models.Model):
             if start and end and (self.deadline < start or self.deadline > end):
                 raise ValidationError({
                     'deadline': 'La fecha de deadline debe estar entre las fechas de inicio y fin de la conferencia.'
+                })
+
+        for start_field, end_field in (
+            ('submission_start', 'submission_end'),
+            ('review_start', 'review_end'),
+        ):
+            start = getattr(self, start_field)
+            end = getattr(self, end_field)
+            if start and end and end < start:
+                raise ValidationError({
+                    end_field: f'{end_field} no puede ser anterior a {start_field}.'
                 })
 
     def save(self, *args, **kwargs):

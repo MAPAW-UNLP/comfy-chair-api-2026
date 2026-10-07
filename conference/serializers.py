@@ -5,7 +5,11 @@ from datetime import date
 class ConferenceSerializerGrupo1(serializers.ModelSerializer):
     class Meta:
         model = Conference
-        fields = ['id', 'title', 'description', 'start_date', 'end_date', 'blind_kind']
+        fields = [
+            'id', 'title', 'description', 'start_date', 'end_date',
+            'submission_start', 'submission_end', 'review_start', 'review_end',
+            'blind_kind'
+        ]
 
 class ConferenceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -61,5 +65,16 @@ class ConferenceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "end_date": "La fecha de fin no puede ser anterior a la fecha de inicio."
             })
+
+        for start_field, end_field in (
+            ('submission_start', 'submission_end'),
+            ('review_start', 'review_end'),
+        ):
+            start = data.get(start_field, getattr(self.instance, start_field, None))
+            end = data.get(end_field, getattr(self.instance, end_field, None))
+            if start and end and end < start:
+                raise serializers.ValidationError({
+                    end_field: f"{end_field} no puede ser anterior a {start_field}."
+                })
 
         return data

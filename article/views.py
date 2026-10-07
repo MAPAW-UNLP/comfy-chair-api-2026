@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404
 from article.models import Article, ArticleDeletionRequest
+from conference.periods import is_period_open
 from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer
 
 # --- Endpoints para el modelo Article ---
@@ -11,6 +12,9 @@ class ArticleViewSet(viewsets.ModelViewSet):
 
     queryset = Article.objects.all()
     serializer_class = ArticleSerializer
+
+    def _submission_is_open(self, session):
+        return session is None or is_period_open(session, 'submission')
     
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para el alta de un articulo
@@ -22,6 +26,13 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'errors': serializer.errors,
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        session = serializer.validated_data.get('session')
+        if not self._submission_is_open(session):
+            return Response(
+                {'error': 'El periodo de envío de artículos está cerrado.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
@@ -37,6 +48,14 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'errors': serializer.errors,
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        new_session = serializer.validated_data.get('session', instance.session)
+        sessions = {session for session in (instance.session, new_session) if session is not None}
+        if any(not self._submission_is_open(session) for session in sessions):
+            return Response(
+                {'error': 'El periodo de envío de artículos está cerrado.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         self.perform_update(serializer)
         return Response(serializer.data)

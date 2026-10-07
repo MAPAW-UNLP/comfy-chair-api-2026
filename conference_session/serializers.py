@@ -64,6 +64,17 @@ class SessionSerializer(serializers.ModelSerializer):
         if start and end and (deadline < start or deadline > end):
             raise serializers.ValidationError({"deadline": "El deadline debe estar entre las fechas de inicio y fin de la conferencia."})
 
+        for start_field, end_field in (
+            ('submission_start', 'submission_end'),
+            ('review_start', 'review_end'),
+        ):
+            period_start = data.get(start_field, getattr(self.instance, start_field, None))
+            period_end = data.get(end_field, getattr(self.instance, end_field, None))
+            if period_start and period_end and period_end < period_start:
+                raise serializers.ValidationError({
+                    end_field: f"{end_field} no puede ser anterior a {start_field}."
+                })
+
         # --- Prohibir chairs que ya son chairs de la misma conferencia ---
         conf_chair_ids = set(conference.chairs.values_list('id', flat=True))
         chairs_ids = []
