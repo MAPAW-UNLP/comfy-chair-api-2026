@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('article', '0002_initial'),
-        ('reviewer', '0002_initial'),
+        ('reviewer', '0004_invitationnotification'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
