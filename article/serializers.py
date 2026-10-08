@@ -5,15 +5,21 @@ from conference_session.models import Session
 from .models import Article, ArticleDeletionRequest, ArticleHistory, Source
 from conference_session.serializers import SessionSerializer
 
+class SourceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Source
+        fields = ['id', 'file_path', 'filename']
 
-
-# --- Serializer para Article ---
 class ArticleSerializer(serializers.ModelSerializer):
 
     # Lectura
     session = SessionSerializer(read_only=True)
     authors = UserSerializer(many=True, read_only=True)
     corresponding_author = UserSerializer(read_only=True)
+    
+    # NUEVO: Lectura de Sources vinculados al artículo. 
+    # Usamos source='source_set' porque es el related_name por defecto de Django.
+    sources = SourceSerializer(source='source_set', many=True, read_only=True)
 
     # Escritura
     session_id = serializers.PrimaryKeyRelatedField(
@@ -25,6 +31,8 @@ class ArticleSerializer(serializers.ModelSerializer):
     corresponding_author_id = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(), source='corresponding_author', write_only=True
     )
+    
+    sources = SourceSerializer(source='source_set', many=True, read_only=True)
 
     class Meta:
         model = Article
@@ -33,8 +41,26 @@ class ArticleSerializer(serializers.ModelSerializer):
             'abstract',
             'authors', 'corresponding_author',
             'authors_ids', 'corresponding_author_id',
-            'session', 'session_id'
+            'session', 'session_id',
+            'sources' # <- Añadido aquí
         ]
+
+    def create(self, validated_data):
+        # 1. Extraemos los sources antes de que DRF intente guardarlos
+        sources_data = validated_data.pop('sources_data', [])
+        
+        # 2. Creamos el artículo (esto también maneja automáticamente las relaciones ManyToMany como authors_ids)
+        article = super().create(validated_data)
+        
+        # 3. Creamos y vinculamos los Sources
+        # Usamos bulk_create para golpear la base de datos una sola vez
+        sources_to_create = [
+            Source(article=article, **source) for source in sources_data
+        ]
+        if sources_to_create:
+            Source.objects.bulk_create(sources_to_create)
+            
+        return article
 
 
 class ArticleHistorySerializer(serializers.ModelSerializer):
@@ -77,33 +103,3 @@ class ArticleDeletionRequestSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at']
 
-
-class SourceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Source
-        fields = ['id', 'file_path', 'filename']
-
-class ArticleWithSourcesSerializer(serializers.ModelSerializer):
-    # many=True permite lista de 0, 1 o N; required=False permite omitir la clave
-    sources = SourceSerializer(many=True, required=False, default=list)
-
-    class Meta:
-        model = Article
-        fields = '__all__'
-
-    def create(self, validated_data):
-        # 1. Extraer la lista de sources antes de crear el Article
-        sources_data = validated_data.pop('sources', [])
-
-        # 2. Crear el Article
-        article = Article.objects.create(**validated_data)
-
-        # 3. Crear en lote (bulk) los sources asociados al article creado
-        if sources_data:
-            sources_instances = [
-                Source(article=article, **source_item)
-                for source_item in sources_data
-            ]
-            Source.objects.bulk_create(sources_instances)
-
-        return article

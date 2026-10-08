@@ -110,6 +110,9 @@ class ArticleDeletionRequest(models.Model):
         return f"Solicitud de eliminación - {self.article.title} ({self.status})"
 
 class Source(models.Model):
-    file_path = models.CharField(max_length=300)
+    file_path = models.FileField(upload_to='articles/')
     filename = models.CharField(max_length=300)
     article = models.ForeignKey(Article, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return self.filename
