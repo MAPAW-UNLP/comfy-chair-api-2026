@@ -5,7 +5,16 @@ from datetime import date
 class ConferenceSerializerGrupo1(serializers.ModelSerializer):
     class Meta:
         model = Conference
-        fields = ['id', 'title', 'description', 'start_date', 'end_date', 'blind_kind']
+        fields = [
+                'id',
+                'title',
+                'description',
+                'start_date', 
+                'end_date', 
+                'blind_kind', 
+                'allowed_extensions',  
+                'sources_multiple',    
+        ]
 
 class ConferenceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -62,4 +71,5 @@ class ConferenceSerializer(serializers.ModelSerializer):
                 "end_date": "La fecha de fin no puede ser anterior a la fecha de inicio."
             })
 
+        
         return data

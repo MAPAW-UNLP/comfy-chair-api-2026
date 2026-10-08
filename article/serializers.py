@@ -2,8 +2,10 @@ from user.models import User
 from rest_framework import serializers
 from user.serializers import UserSerializer
 from conference_session.models import Session
-from .models import Article, ArticleDeletionRequest, ArticleHistory
+from .models import Article, ArticleDeletionRequest, ArticleHistory, Source
 from conference_session.serializers import SessionSerializer
+
+
 
 # --- Serializer para Article ---
 class ArticleSerializer(serializers.ModelSerializer):
@@ -28,7 +30,7 @@ class ArticleSerializer(serializers.ModelSerializer):
         model = Article
         fields = [
             'id', 'title', 'main_file', 'status', 'type',
-            'abstract', 'source_file',
+            'abstract',
             'authors', 'corresponding_author',
             'authors_ids', 'corresponding_author_id',
             'session', 'session_id'
@@ -74,3 +76,34 @@ class ArticleDeletionRequestSerializer(serializers.ModelSerializer):
             'status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']
+
+
+class SourceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Source
+        fields = ['id', 'file_path', 'filename']
+
+class ArticleWithSourcesSerializer(serializers.ModelSerializer):
+    # many=True permite lista de 0, 1 o N; required=False permite omitir la clave
+    sources = SourceSerializer(many=True, required=False, default=list)
+
+    class Meta:
+        model = Article
+        fields = '__all__'
+
+    def create(self, validated_data):
+        # 1. Extraer la lista de sources antes de crear el Article
+        sources_data = validated_data.pop('sources', [])
+
+        # 2. Crear el Article
+        article = Article.objects.create(**validated_data)
+
+        # 3. Crear en lote (bulk) los sources asociados al article creado
+        if sources_data:
+            sources_instances = [
+                Source(article=article, **source_item)
+                for source_item in sources_data
+            ]
+            Source.objects.bulk_create(sources_instances)
+
+        return article

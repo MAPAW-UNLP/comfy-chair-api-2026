@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404
 from article.models import Article, ArticleDeletionRequest, ArticleHistory
-from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer
+from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer, ArticleWithSourcesSerializer
 
 # --- Endpoints para el modelo Article ---
 class ArticleViewSet(viewsets.ModelViewSet):
@@ -21,14 +21,25 @@ class ArticleViewSet(viewsets.ModelViewSet):
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para el alta de un articulo
     #------------------------------------------------------------
+    @action(detail=True, methods=['post'])    
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        # 1. Normalizar los datos si vienen encapsulados bajo la clave 'article'
+        raw_data = request.data.get('article', request.data).copy()
+        
+        # 2. Inyectar 'sources' al diccionario que consumirá el serializer
+        if 'sources' in request.data:
+            raw_data['sources'] = request.data.get('sources')
+
+        # 3. Validar los datos
+        serializer = self.get_serializer(data=raw_data)
         if not serializer.is_valid():
             return Response({
                 'errors': serializer.errors,
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
+
         
+        # 4. Guardar dentro de la transacción atómica
         with transaction.atomic():
             self.perform_create(serializer)
             created_article = serializer.instance
@@ -38,6 +49,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 event_type='submitted',
                 created_by_id=author.id,
             )
+
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
     
