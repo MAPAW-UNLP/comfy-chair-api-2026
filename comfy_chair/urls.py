@@ -19,8 +19,11 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from .api import AdminRegisterAPI, GetUserIdAPI, GetUserListAPI, LoginAPI, UserRegisterAPI, GetUsersNoAdminAPI, UpdateUserDataAPI, UpdateUserPasswordAPI, GetUserFullDataAPI, GeneralMetricsAPI
+
 
 urlpatterns = [
+    path('general-metrics/', GeneralMetricsAPI.as_view(), name='general-metrics'),
     path('admin/', admin.site.urls),
     path('user/', include('user.urls')),
     path('api/', include('article.urls')),

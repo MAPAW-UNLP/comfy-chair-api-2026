@@ -297,3 +297,29 @@ class UpdateUserPasswordAPI(APIView):
         user.save()
 
         return JsonResponse({'message': 'Contraseña actualizada correctamente.'}, status=200)
+
+class GeneralMetricsAPI(APIView):
+    def get(self, request):
+        data = []
+        for art in Article.objects.all():
+            data.append( {
+                'id': art.id,
+                'title': art.title,
+                'status': art.status,
+                'type': art.type,
+            })
+        total_users = User.objects.count()
+        total_articles = Article.objects.count()
+        total_bids = Bid.objects.count()
+
+        data.append({
+            'reviews': [
+                {
+                    'id': review.id,
+                    'score': review.score,
+                    'opinion': review.opinion,
+                } for review in Review.objects.all()
+            ]
+        })
+
+        return JsonResponse(data, status=200)
