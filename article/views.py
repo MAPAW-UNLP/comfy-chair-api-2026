@@ -25,44 +25,32 @@ class ArticleViewSet(viewsets.ModelViewSet):
     # GRUPO 1 - Endpoint para el alta de un articulo
     #------------------------------------------------------------
     def create(self, request, *args, **kwargs):
-        # 1. Hacemos una copia mutable de los datos recibidos (soportando dict y QueryDict)
-        if hasattr(request.data, 'copy'):
-            data = request.data.copy()
+        if hasattr(request.data, '_mutable'):
+            request.data._mutable = True
+
+        authors_ids = request.data.getlist('authors_ids') if hasattr(request.data, 'getlist') else request.data.get('authors_ids', [])
+        authors_ids = authors_ids if isinstance(authors_ids, list) else ([authors_ids] if authors_ids else [])
+        
+        if hasattr(request.data, 'setlist'):
+            request.data.setlist('authors_ids', authors_ids)
         else:
-            import copy
-            data = copy.deepcopy(request.data)
+            request.data['authors_ids'] = authors_ids
 
-        # 2. Extraemos los authors_ids de forma segura
-        # Si es un FormData tendrá getlist(), si es JSON usamos get() estándar
-        if hasattr(request.data, 'getlist'):
-            authors_ids = request.data.getlist('authors_ids')
-        else:
-            authors_ids = request.data.get('authors_ids', [])
+        if hasattr(request.data, '_mutable'):
+            request.data._mutable = False
 
-        # 3. Forzamos a que siempre sea una lista
-        if not isinstance(authors_ids, list):
-            authors_ids = [authors_ids] if authors_ids else []
-
-        # 4. Lo reasignamos al objeto data
-        if hasattr(data, 'setlist'):
-            data.setlist('authors_ids', authors_ids)
-        else:
-            data['authors_ids'] = authors_ids
-
-        # 5. Pasamos los datos corregidos al serializador
-        serializer = self.get_serializer(data=data)
+        serializer = self.get_serializer(data=request.data)
         
         if not serializer.is_valid():
-                    return Response({
-                        'errors': serializer.errors,
-                        'data_received': request.data
-                    }, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'errors': serializer.errors,
+                'data_received': "Data contains files, omitted for debug"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         with transaction.atomic():
-            # 1. Guarda el Article y su main_file
             self.perform_create(serializer)
             created_article = serializer.instance
             
-            # 2. Registra el historial
             author = created_article.corresponding_author
             ArticleHistory.objects.create(
                 article=created_article,
@@ -70,15 +58,13 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 created_by_id=author.id,
             )
 
-            # 3. EXTRAE Y GUARDA LOS SOURCES FÍSICOS
-            # Usamos getlist() para obtener todos los archivos enviados bajo la clave 'sources'
             source_files = request.FILES.getlist('sources')
             
             for file in source_files:
                 Source.objects.create(
                     article=created_article,
-                    file_path=file,       # Pasamos el archivo directamente
-                    filename=file.name    # Extraemos el nombre original del archivo
+                    file_path=file,
+                    filename=file.name
                 )
 
         headers = self.get_success_headers(serializer.data)
@@ -113,14 +99,6 @@ class ArticleViewSet(viewsets.ModelViewSet):
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para descargar el archivo de fuentes
     #------------------------------------------------------------
-   # @action(detail=True, methods=['get'])
-    #def download_source(self, request, pk=None):
-   #     article = self.get_object()
-   #     if not article.source_file:
-  #          raise Http404("Este artículo no tiene archivo fuente.")
-  #      response = FileResponse(article.source_file.open('rb'), as_attachment=True)
-   #     response['Content-Disposition'] = f'attachment; filename="{article.source_file.name.split("/")[-1]}"'
-   #     return response
     @action(detail=True, methods=['get'])
     def download_source(self, request, pk=None):
         article = self.get_object()
