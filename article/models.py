@@ -51,7 +51,6 @@ class Article(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='reception')
     type = models.CharField(max_length=10, choices=ARTICLE_TYPE_CHOICES)
     abstract = models.TextField(max_length=300)
-    source_file = models.FileField(upload_to='articles/sources/', blank=True, null=True)  # Solo para Articulos de Tipo Poster
 
     # Relaciones 
     authors = models.ManyToManyField(User, related_name='article')
@@ -87,6 +86,7 @@ class ArticleHistory(models.Model):
 
     def __str__(self):
         return f"{self.article.title} - {self.event_type} - {self.created_at}"
+    
 # --- Modelo ArticleDeletionRequest --- #
 class ArticleDeletionRequest(models.Model):
     
@@ -108,3 +108,11 @@ class ArticleDeletionRequest(models.Model):
 
     def __str__(self):
         return f"Solicitud de eliminación - {self.article.title} ({self.status})"
+
+class Source(models.Model):
+    file_path = models.FileField(upload_to='articles/')
+    filename = models.CharField(max_length=300)
+    article = models.ForeignKey(Article, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return self.filename
