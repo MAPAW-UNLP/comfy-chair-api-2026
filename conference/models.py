@@ -35,6 +35,9 @@ class Conference (models.Model):
         blank=True,
         related_name='conferences'
     )
+
+    allowed_extensions = models.JSONField(default=list, blank=True)
+    sources_multiple = models.BooleanField(default=False)
     
     def __str__(self):
         return self.title
