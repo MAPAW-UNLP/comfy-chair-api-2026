@@ -13,6 +13,11 @@ from chair.models import ReviewAssignment
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.contrib.auth.hashers import check_password
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from .models import User
+from .serializers import UserSerializer
+from rest_framework.permissions import AllowAny
 
 class UserRegisterAPI(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -297,3 +302,11 @@ class UpdateUserPasswordAPI(APIView):
         user.save()
 
         return JsonResponse({'message': 'Contraseña actualizada correctamente.'}, status=200)
+
+class GetSessionReviewersAPI(APIView):
+
+    def get(self, request, session_id, *args, **kwargs):
+        reviewers = User.objects.filter(role="user", deleted=False)
+        ## reviewers = reviewers.exclude(session__id=session_id) # excluye al chair de la sesion
+        serializer = UserSerializer(reviewers, many=True)
+        return Response(serializer.data, status=200)
