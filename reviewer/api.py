@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.http import JsonResponse
 from django.db.models import Case, Exists, F, OuterRef, Q, Value, When
 from reviewer.models import Review, Article, Bid, ReviewVersion, User, ReviewerInvitation, InvitationNotification
+from article.models import ArticleHistory
 from chair.models import ReviewAssignment
 from conference.models import Conference
 from reviewer.conflicts import AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
@@ -26,25 +27,25 @@ from reviewer.serializers import (
     RejectInvitationSerializer,
 )
 
-# # GET /api/articles
-# class ArticleListView(APIView):
-#     def get(self, request):
-#         articles = Article.objects.all()
-#         serializer = ArticleSerializer(articles, many=True)
-#         return Response(serializer.data)
+ # GET /api/articles
+ #class ArticleListView(APIView):
+     #def get(self, request):
+    #     articles = Article.objects.all()
+   #      serializer = ArticleSerializer(articles, many=True)
+  #       return Response(serializer.data)
 
-# # GET /api/articles/{id}
-# class ArticleDetailView(APIView):
+ # GET /api/articles/{id}
+ #class ArticleDetailView(APIView):
 #     def get_object(self, pk):
-#         try:
-#             return Article.objects.get(pk=pk)
-#         except Article.DoesNotExist:
-#             raise Http404
+        # try:
+       #      return Article.objects.get(pk=pk)
+      #   except Article.DoesNotExist:
+     #        raise Http404
 
-#     def get(self, request, pk):
-#         article = self.get_object(pk)
-#         serializer = ArticleSerializer(article)
-#         return Response(serializer.data)
+    # def get(self, request, pk):
+   #      article = self.get_object(pk)
+  #       serializer = ArticleSerializer(article)
+ #        return Response(serializer.data)
 
 # POST /api/bidding
 class BiddingView(APIView):
@@ -261,12 +262,20 @@ class ReviewPublishView(APIView):
             review.is_published = True
             review.created_at = timezone.now()
             review.save()
+            #Creo la primera version
             ReviewVersion.objects.create(
                 review=review,
                 version_number=1,
                 score=review.score,
                 opinion=review.opinion,
                 chair_comments=review.chair_comments,
+            )
+
+            #Historial
+            ArticleHistory.objects.create(
+                created_by= review.reviewer,
+                event_type= 'review_received',
+                article=review.article,
             )
 
         serializer = ReviewSerializer(review)
