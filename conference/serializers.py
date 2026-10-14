@@ -6,10 +6,19 @@ class ConferenceSerializerGrupo1(serializers.ModelSerializer):
     class Meta:
         model = Conference
         fields = [
-            'id', 'title', 'description', 'start_date', 'end_date',
-            'submission_start', 'submission_end', 'review_start', 'review_end',
-            'blind_kind'
-        ]
+    'submission_start',
+    'submission_end',
+    'review_start',
+    'review_end',
+    'id',
+    'title',
+    'description',
+    'start_date',
+    'end_date',
+    'blind_kind',
+    'allowed_extensions',
+    'sources_multiple',
+]
 
 class ConferenceSerializer(serializers.ModelSerializer):
     class Meta:
@@ -77,4 +86,5 @@ class ConferenceSerializer(serializers.ModelSerializer):
                     end_field: f"{end_field} no puede ser anterior a {start_field}."
                 })
 
+        
         return data
