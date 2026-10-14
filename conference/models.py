@@ -22,6 +22,11 @@ class Conference (models.Model):
         null=False, 
         blank=False
     )
+    # agrego las fechas de submission y review para la conferencia /grupo5
+    submission_start = models.DateField(null=True, blank=True, default=None)
+    submission_end = models.DateField(null=True, blank=True, default=None)
+    review_start = models.DateField(null=True, blank=True, default=None)
+    review_end = models.DateField(null=True, blank=True, default=None)
     # tipo de lectura 
     blind_kind = models.CharField(
         max_length=12,

@@ -18,7 +18,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
 
     queryset = Article.objects.all()
     serializer_class = ArticleSerializer
-    
+
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para el alta de un articulo
     #------------------------------------------------------------
@@ -29,7 +29,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'errors': serializer.errors,
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
@@ -44,7 +44,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'errors': serializer.errors,
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         self.perform_update(serializer)
         return Response(serializer.data)
     
