@@ -6,9 +6,19 @@ class ConferenceSerializerGrupo1(serializers.ModelSerializer):
     class Meta:
         model = Conference
         fields = [
-            'id', 'title', 'description', 'start_date', 'end_date',
-            'submission_start', 'submission_end', 'review_start', 'review_end',
-            'blind_kind'
+               
+            'id',
+            'title',
+            'description',
+            'start_date', 
+            'end_date', 
+            'blind_kind', 
+            'allowed_extensions',  
+            'sources_multiple', 
+            'submission_start',
+            'submission_end', 
+            'review_start', 
+            'review_end',
         ]
 
 class ConferenceSerializer(serializers.ModelSerializer):
