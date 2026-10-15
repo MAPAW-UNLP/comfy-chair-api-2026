@@ -7,7 +7,6 @@ from django.db.models import Q
 from .models import Conference
 from .serializers import ConferenceSerializer
 from django.utils import timezone
-from django.db.models import Q
 from .permissions import IsAdmin
 from user.models import User
 
