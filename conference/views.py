@@ -127,11 +127,21 @@ class ConferenceViewSet(viewsets.ModelViewSet):
             ),
         })
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        search = self.request.query_params.get('search')
+        if search and search.strip():
+            search = search.strip()
+            queryset = queryset.filter(
+                Q(title__icontains=search) | Q(description__icontains=search)
+            )
+        return queryset
+
     # /api/conference/finished/  -->  devuelve las conferencias con end_date < fecha_actual
     @action(detail=False, methods=['get'])
     def finished(self, request):
         fecha_actual = timezone.now().date()
-        conferencias = Conference.objects.filter(
+        conferencias = self.get_queryset().filter(
             end_date__lt=fecha_actual
         ).order_by('-id')  
         serializer = self.get_serializer(conferencias, many=True)
@@ -141,7 +151,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def active(self, request):
         fecha_actual = timezone.now().date()
-        conferencias = Conference.objects.filter(
+        conferencias = self.get_queryset().filter(
             end_date__gte=fecha_actual
         ).order_by('-id') 
         serializer = self.get_serializer(conferencias, many=True)
