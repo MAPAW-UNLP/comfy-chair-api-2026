@@ -10,6 +10,13 @@ from django.http import FileResponse, Http404, HttpResponse
 from article.models import Article, ArticleDeletionRequest, ArticleHistory, Source
 from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer
 
+
+from article.models import Article
+from article.serializers import ArticleSerializer
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
 # --- Endpoints para el modelo Article ---
 class ArticleViewSet(viewsets.ModelViewSet):
     queryset = Article.objects.all()
@@ -20,7 +27,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
         article = self.get_object()
         events = article.history_events.order_by('created_at', 'id')
         return Response(ArticleHistorySerializer(events, many=True).data)
-    
+
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para el alta de un articulo
     #------------------------------------------------------------
@@ -46,7 +53,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'errors': serializer.errors,
                 'data_received': "Data contains files, omitted for debug"
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         with transaction.atomic():
             self.perform_create(serializer)
             created_article = serializer.instance
@@ -80,7 +87,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'errors': serializer.errors,
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
-        
+
         self.perform_update(serializer)
         return Response(serializer.data)
     
@@ -142,3 +149,5 @@ class ArticleViewSet(viewsets.ModelViewSet):
         articles = Article.objects.filter(session__conference=conference_id)
         serializer = ArticleSerializer(articles, many=True)
         return Response(serializer.data)
+
+

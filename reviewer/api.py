@@ -137,8 +137,10 @@ def review_forbidden_reason(reviewer, article):
 #Guarda una nueva revisión en borrador
 class ReviewView(APIView):
     def post(self, request):
-        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
-        user_id = getattr(request, "user_id", None)
+        serializer = ReviewSerializer(data = request.data)
+        if serializer.is_valid():
+            data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+            user_id = getattr(request, "user_id", None)
         if user_id is not None:
             if "reviewer" not in data:
                 data["reviewer"] = user_id
