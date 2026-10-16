@@ -1,6 +1,17 @@
 from django.urls import path
 
-from .api import AdminRegisterAPI, GetUserIdAPI, GetUserListAPI, LoginAPI, UserRegisterAPI, GetUsersNoAdminAPI, UpdateUserDataAPI, UpdateUserPasswordAPI, GetUserFullDataAPI
+from .api import (
+    AdminRegisterAPI, 
+    GetUserIdAPI, 
+    GetUserListAPI, 
+    LoginAPI, 
+    UserRegisterAPI, 
+    GetUsersNoAdminAPI, 
+    UpdateUserDataAPI, 
+    UpdateUserPasswordAPI, 
+    GetUserFullDataAPI, 
+    GetSessionReviewersAPI
+)
 
 urlpatterns = [
     path("register/", UserRegisterAPI.as_view(), name="register-user"),
@@ -12,4 +23,6 @@ urlpatterns = [
     path('getCommonUsers/', GetUsersNoAdminAPI.as_view(), name='common-users-list'), # Creado por Grupo 3 para obtener usuarios comunes
     path('update/', UpdateUserDataAPI.as_view(), name='update-user-data'),
     path('update-password/', UpdateUserPasswordAPI.as_view(), name='update-user-password'),
+    path('sessions/<int:session_id>/reviewers/', GetSessionReviewersAPI.as_view(), name='session-reviewers'),
 ]
+

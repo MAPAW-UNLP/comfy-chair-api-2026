@@ -3,7 +3,7 @@ from django.contrib.auth.models import AbstractUser
 
 class User(AbstractUser):
     ROLES = (
-        ("user", "User"),
+        ("user", "User"), #valor_en_bd, etiqueta_visible
         ("admin", "Admin"),
     )
     full_name = models.CharField(max_length=150)
