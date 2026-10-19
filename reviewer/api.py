@@ -12,6 +12,8 @@ from reviewer.models import Review, Article, Bid, ReviewVersion, User, ReviewerI
 from article.models import ArticleHistory
 from chair.models import ReviewAssignment
 from conference.models import Conference
+from conference_session.models import Session
+from reviewer.integrations import bidding_window, review_window
 from reviewer.conflicts import AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
 from reviewer.serializers import (
     ReviewUpdateSerializer,
@@ -672,3 +674,21 @@ class ReviewerArticleAssignmentView(APIView):
         if reason:
             return Response({'error': reason}, status=status.HTTP_403_FORBIDDEN)
         return Response({'assigned': True}, status=status.HTTP_200_OK)
+
+
+# GET /api/reviewer/sessions/{session_id}/periods/
+class SessionPeriodsView(APIView):
+    def get(self, request, session_id):
+        if not getattr(request, 'user_id', None):
+            return Response({'error': 'Autenticación requerida'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        session = Session.objects.select_related('conference').filter(id=session_id).first()
+        if session is None:
+            return Response({'error': 'Sesión no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        now = timezone.now()
+        return Response({
+            'session_id': session.id,
+            'server_now': now,
+            'bidding': bidding_window(session).as_dict(now),
+            'review': review_window(session).as_dict(now),
+        }, status=status.HTTP_200_OK)

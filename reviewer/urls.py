@@ -1,6 +1,6 @@
 from django.urls import path
 # from .api import ArticleDetailView, ArticleListView
-from .api import BiddingUpdateView, BiddingView, ReviewPublishView, ReviewUpdateDraftView, ReviewUpdatePublishedView, ReviewerBidsView, ReviewerDetailView, ReviewView, ReviewDetailView, ReviewsArticleView, ReviewByReviewerView, ReviewsByReviewerIdView,ReviewVersionsView, ReviewerAssignmentsView, ReviewerInvitationsView, ReviewerInvitationDetailView, AcceptInvitationView, RejectInvitationView, ReviewerConferencesView, ReviewerArticleAssignmentView, InvitationNotificationsView
+from .api import BiddingUpdateView, BiddingView, ReviewPublishView, ReviewUpdateDraftView, ReviewUpdatePublishedView, ReviewerBidsView, ReviewerDetailView, ReviewView, ReviewDetailView, ReviewsArticleView, ReviewByReviewerView, ReviewsByReviewerIdView,ReviewVersionsView, ReviewerAssignmentsView, ReviewerInvitationsView, ReviewerInvitationDetailView, AcceptInvitationView, RejectInvitationView, ReviewerConferencesView, ReviewerArticleAssignmentView, InvitationNotificationsView, SessionPeriodsView
 urlpatterns = [
     path('reviewer/invitation-notifications/', InvitationNotificationsView.as_view(), name='reviewer-invitation-notifications'),
     path('reviewer/articles/<int:article_id>/assignment/', ReviewerArticleAssignmentView.as_view(), name='reviewer-article-assignment'),
@@ -25,5 +25,6 @@ urlpatterns = [
     path('article/<int:article_id>/reviews/',ReviewsArticleView.as_view(),name="reviews-article"),
     path('reviews/<int:articleId>/<int:reviewerId>/', ReviewByReviewerView.as_view(), name='review-by-reviewer'),
     path('reviewer/assignments/', ReviewerAssignmentsView.as_view(), name='reviewer-assignments'),
+    path('reviewer/sessions/<int:session_id>/periods/', SessionPeriodsView.as_view(), name='reviewer-session-periods'),
 
 ]
