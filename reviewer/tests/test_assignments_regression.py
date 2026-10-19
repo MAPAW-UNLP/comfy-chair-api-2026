@@ -4,12 +4,14 @@ A diferencia de test_assignments.py (que prueba el endpoint por partes), acá se
 recorre el camino completo: el revisor avanza (borrador -> publicada) usando los
 endpoints reales y se verifica que GET /api/reviewer/assignments/ refleje cada paso.
 """
+from datetime import datetime, timezone
 from unittest import mock
 
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 
 from chair.models import ReviewAssignment
+from reviewer.integrations import Window
 
 from .base import ReviewerTestCase
 
@@ -200,8 +202,8 @@ class AsignacionesRegresionTests(ReviewerTestCase):
     def test_review_period_refleja_la_ventana_de_cada_sesion(self):
         self.asignar(self.sesion_1)
         self.asignar(self.sesion_2)
-        cerrada = {"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z", "is_open": False}
-        abierta = {"start": None, "end": "2099-01-01T00:00:00Z", "is_open": True}
+        cerrada = Window(datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc))
+        abierta = Window(None, datetime(2099, 1, 1, tzinfo=timezone.utc))
 
         def ventana(sesion):
             return cerrada if sesion.id == self.sesion_1.id else abierta
@@ -210,8 +212,14 @@ class AsignacionesRegresionTests(ReviewerTestCase):
             resultados = self.consultar()["results"]
 
         por_sesion = {r["session"]["id"]: r["review_period"] for r in resultados}
-        self.assertEqual(por_sesion[self.sesion_1.id], cerrada)
-        self.assertEqual(por_sesion[self.sesion_2.id], abierta)
+        self.assertEqual(
+            por_sesion[self.sesion_1.id],
+            {"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z", "is_open": False},
+        )
+        self.assertEqual(
+            por_sesion[self.sesion_2.id],
+            {"start": None, "end": "2099-01-01T00:00:00Z", "is_open": True},
+        )
 
     # ---------- 6. aislamiento entre revisores ----------
 

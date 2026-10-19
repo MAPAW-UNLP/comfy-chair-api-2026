@@ -189,7 +189,7 @@ class ReviewerAssignmentSerializer(serializers.ModelSerializer):
         return 'published' if review.is_published else 'draft'
 
     def get_review_period(self, obj):
-        return review_window(obj.article.session)
+        return review_window(obj.article.session).as_dict()
 
 
 class InvitationConferenceSerializer(serializers.ModelSerializer):
