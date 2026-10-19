@@ -121,7 +121,6 @@
       "status": "review",
       "type": "regular",
       "abstract": "We explore transformer architectures and optimization methods applied to NLP.",
-      "source_file": null,
       "corresponding_author": 1,
       "session": 1,
       "authors": [1, 2]
@@ -136,7 +135,6 @@
       "status": "review",
       "type": "regular",
       "abstract": "New strategies for real-time monitoring and performance tuning in distributed systems.",
-      "source_file": null,
       "corresponding_author": 2,
       "session": 2,
       "authors": [2, 3]
@@ -151,7 +149,6 @@
       "status": "review",
       "type": "poster",
       "abstract": "We present a lightweight authentication protocol for constrained IoT environments.",
-      "source_file": "articles/sources/iot-src.zip",
       "corresponding_author": 5,
       "session": 2,
       "authors": [5, 6]
@@ -166,7 +163,6 @@
       "status": "review",
       "type": "regular",
       "abstract": "An exploration of Shor-based cryptanalysis optimized for near-term quantum hardware.",
-      "source_file": null,
       "corresponding_author": 4,
       "session": 1,
       "authors": [4, 1]
