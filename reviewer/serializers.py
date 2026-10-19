@@ -126,6 +126,14 @@ class PublicReviewSerializer(serializers.ModelSerializer):
         fields = ['id', 'article', 'reviewer', 'score', 'opinion', 'created_at', 'updated_at']
 
 
+class ChairReviewSerializer(serializers.ModelSerializer):
+    reviewer_name = serializers.CharField(source='reviewer.full_name', read_only=True)
+
+    class Meta:
+        model = Review
+        fields = ['id', 'article', 'reviewer', 'reviewer_name', 'score', 'opinion', 'chair_comments', 'created_at', 'updated_at']
+
+
 class AssignmentArticleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Article

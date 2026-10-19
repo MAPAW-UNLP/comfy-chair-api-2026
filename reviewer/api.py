@@ -23,6 +23,7 @@ from reviewer.serializers import (
     ReviewSerializer,
     ReviewVersionSerializer,
     PublicReviewSerializer,
+    ChairReviewSerializer,
     ReviewerAssignmentSerializer,
     ReviewerInvitationSerializer,
     ReviewerInvitationDetailSerializer,
@@ -363,6 +364,31 @@ class ReviewsArticleView(APIView):
             "count": reviews.count(),
             "reviews": serializer.data,
         })
+
+
+# GET /api/article/<int:article_id>/reviews/confidential/
+class ConfidentialArticleReviewsView(APIView):
+    def get(self, request, article_id):
+        uid = getattr(request, "user_id", None)
+        article = Article.objects.select_related("session__conference").filter(id=article_id).first()
+        if article is None:
+            return Response({"error": "Artículo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        session = article.session
+        is_chair = session is not None and (
+            session.chairs.filter(id=uid).exists() or session.conference.chairs.filter(id=uid).exists()
+        )
+        if not is_chair:
+            return Response(
+                {"error": "No tenés permiso de Chair para ver los comentarios confidenciales de este artículo"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        reviews = Review.objects.filter(article=article, is_published=True).select_related("reviewer").order_by("id")
+        return Response({
+            "article_id": article.id,
+            "reviews": ChairReviewSerializer(reviews, many=True).data,
+        }, status=status.HTTP_200_OK)
 
 
 # GET /api/reviews/{articleId}/{reviewerId}/
