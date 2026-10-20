@@ -1,5 +1,6 @@
 from django.utils import timezone
 from chair.models import ReviewAssignment
+from notification.models import Notification
 
 
 class ChairConflictError(Exception):
@@ -52,28 +53,76 @@ def get_chair_impact(user):
     return impact
 
 
-def get_pending_reviews(user):
-    assignments = (
+def _pending_assignments(user):
+    # Pendiente = todavía no publicó la revisión (incluye los borradores).
+    return (
         ReviewAssignment.objects.filter(
             reviewer=user,
             reviewed=False,
             deleted=False,
             **active_conference_filter('article__session__conference__'),
         )
-        .select_related('article__session')
+        .select_related('article__session__conference')
         .order_by('article__session__title', 'article__title')
     )
 
+
+def _group_by_session(assignments):
     sessions = {}
     for assignment in assignments:
         session = assignment.article.session
-        entry = sessions.setdefault(session.id, {
-            'session_id': session.id,
-            'session_title': session.title,
-            'articles': [],
-        })
-        entry['articles'].append({'id': assignment.article.id, 'title': assignment.article.title})
+        sessions.setdefault(session.id, {'session': session, 'assignments': []})
+        sessions[session.id]['assignments'].append(assignment)
     return list(sessions.values())
+
+
+def get_pending_reviews(user):
+    return [
+        {
+            'session_id': group['session'].id,
+            'session_title': group['session'].title,
+            'articles': [
+                {'id': assignment.article.id, 'title': assignment.article.title}
+                for assignment in group['assignments']
+            ],
+        }
+        for group in _group_by_session(_pending_assignments(user))
+    ]
+
+
+def _notification_recipients(session, user):
+    chairs = session.chairs.filter(is_active=True).exclude(pk=user.pk)
+    if not chairs.exists():
+        chairs = session.conference.chairs.filter(is_active=True).exclude(pk=user.pk)
+    return chairs
+
+
+def _release_pending_reviews(user):
+    groups = _group_by_session(_pending_assignments(user))
+    assignment_ids = [assignment.id for group in groups for assignment in group['assignments']]
+
+    # update() no dispara el post_save de ReviewAssignment, así el revisor
+    # deshabilitado no recibe el aviso de "Ya no estás asignado".
+    ReviewAssignment.objects.filter(id__in=assignment_ids).update(deleted=True)
+
+    notified_sessions = []
+    for group in groups:
+        session = group['session']
+        articles = ', '.join(f'"{assignment.article.title}"' for assignment in group['assignments'])
+        message = (
+            f'El revisor {user.full_name} ({user.email}) ya no se encuentra habilitado. '
+            f'Tenía asignados los siguientes artículos sin revisar en la sesión "{session.title}": '
+            f'{articles}. Asigná nuevos revisores donde haga falta.'
+        )
+        recipients = list(_notification_recipients(session, user))
+        Notification.objects.bulk_create([
+            Notification(user=chair, title='Revisor deshabilitado', message=message, type='critical')
+            for chair in recipients
+        ])
+        if recipients:
+            notified_sessions.append({'session_id': session.id, 'session_title': session.title})
+
+    return {'removed_assignments': len(assignment_ids), 'notified_sessions': notified_sessions}
 
 
 def get_disable_check(user):
@@ -98,5 +147,8 @@ def disable_user(user):
     for session in impact['sessions']:
         session.chairs.remove(user)
 
+    summary = _release_pending_reviews(user)
+
     user.is_active = False
     user.save(update_fields=['is_active'])
+    return summary

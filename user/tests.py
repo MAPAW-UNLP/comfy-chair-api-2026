@@ -8,7 +8,8 @@ from rest_framework.test import APIClient
 from article.models import Article
 from conference.models import Conference
 from conference_session.models import Session
-from reviewer.models import Bid
+from reviewer.models import Bid, Review
+from notification.models import Notification
 from chair.models import ReviewAssignment
 from user.models import User
 
@@ -426,3 +427,157 @@ class DisableUserChairsTests(UserTestCase):
         response = self.client.get(reverse('user-disable-check', args=[9999]))
 
         self.assertEqual(response.status_code, 404)
+
+
+class DisableReviewerTests(UserTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = self.create_user('admin@example.com', role='admin')
+        self.reviewer = self.create_user('reviewer@example.com', full_name='Rita Revisora')
+        self.session_chair = self.create_user('session-chair@example.com')
+        self.conference_chair = self.create_user('conference-chair@example.com')
+        self.author = self.create_user('author@example.com')
+        self.authenticate(self.admin)
+        today = date.today()
+        self.conference = Conference.objects.create(
+            title='Activa', description='Activa', start_date=today, end_date=today + timedelta(days=30)
+        )
+        self.conference.chairs.set([self.conference_chair])
+        self.session = self.create_session(self.conference, 'Sesión IA', self.session_chair)
+
+    def create_session(self, conference, title, *chairs):
+        session = Session.objects.create(
+            title=title, deadline=conference.end_date, capacity=10, conference=conference
+        )
+        session.chairs.set(chairs)
+        return session
+
+    def create_assignment(self, session, title, **kwargs):
+        article = Article.objects.create(
+            title=title, main_file='articles/a.pdf', type='regular',
+            abstract='Abstract', corresponding_author=self.author, session=session,
+        )
+        return ReviewAssignment.objects.create(reviewer=self.reviewer, article=article, **kwargs)
+
+    def disable(self):
+        return self.client.patch(
+            reverse('update-user-status', args=[self.reviewer.id]), {'is_active': False}, format='json'
+        )
+
+    def disabled_notifications(self, user=None):
+        notifications = Notification.objects.filter(title='Revisor deshabilitado')
+        return notifications.filter(user=user) if user else notifications
+
+    def test_pending_assignments_are_released(self):
+        pending = self.create_assignment(self.session, 'Pendiente')
+
+        response = self.disable()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['removed_assignments'], 1)
+        pending.refresh_from_db()
+        self.assertTrue(pending.deleted)
+
+    def test_reviewed_assignments_and_reviews_are_kept(self):
+        reviewed = self.create_assignment(self.session, 'Revisado', reviewed=True)
+        review = Review.objects.create(
+            reviewer=self.reviewer, article=reviewed.article, score=2, opinion='Bien', is_published=True
+        )
+
+        self.disable()
+
+        reviewed.refresh_from_db()
+        self.assertFalse(reviewed.deleted)
+        self.assertTrue(Review.objects.filter(pk=review.pk).exists())
+
+    def test_session_chairs_are_notified_with_the_articles(self):
+        self.create_assignment(self.session, 'Artículo A')
+        self.create_assignment(self.session, 'Artículo B')
+
+        response = self.disable()
+
+        notification = self.disabled_notifications(self.session_chair).get()
+        self.assertEqual(notification.type, 'critical')
+        self.assertIn('Rita Revisora (reviewer@example.com)', notification.message)
+        self.assertIn('"Sesión IA"', notification.message)
+        self.assertIn('"Artículo A", "Artículo B"', notification.message)
+        self.assertEqual(
+            response.json()['notified_sessions'],
+            [{'session_id': self.session.id, 'session_title': 'Sesión IA'}],
+        )
+        self.assertFalse(self.disabled_notifications(self.conference_chair).exists())
+
+    def test_session_without_chairs_notifies_conference_chairs(self):
+        session = self.create_session(self.conference, 'Sin chairs')
+        self.create_assignment(session, 'Artículo')
+
+        self.disable()
+
+        self.assertEqual(self.disabled_notifications(self.conference_chair).count(), 1)
+
+    def test_inactive_chairs_are_not_notified(self):
+        inactive = self.create_user('inactive-chair@example.com', is_active=False)
+        self.session.chairs.add(inactive)
+        self.create_assignment(self.session, 'Artículo')
+
+        self.disable()
+
+        self.assertFalse(self.disabled_notifications(inactive).exists())
+        self.assertTrue(self.disabled_notifications(self.session_chair).exists())
+
+    def test_one_notification_per_session(self):
+        other_session = self.create_session(self.conference, 'Sesión Redes', self.session_chair)
+        self.create_assignment(self.session, 'Artículo IA')
+        self.create_assignment(other_session, 'Artículo Redes')
+
+        response = self.disable()
+
+        messages = sorted(n.message for n in self.disabled_notifications(self.session_chair))
+        self.assertEqual(len(messages), 2)
+        self.assertIn('"Artículo IA"', messages[0])
+        self.assertNotIn('"Artículo Redes"', messages[0])
+        self.assertIn('"Artículo Redes"', messages[1])
+        self.assertEqual(len(response.json()['notified_sessions']), 2)
+
+    def test_disabled_reviewer_is_not_notified(self):
+        self.create_assignment(self.session, 'Artículo')
+        before = Notification.objects.filter(user=self.reviewer).count()
+
+        self.disable()
+
+        self.assertEqual(Notification.objects.filter(user=self.reviewer).count(), before)
+
+    def test_without_pending_assignments_nobody_is_notified(self):
+        self.create_assignment(self.session, 'Revisado', reviewed=True)
+
+        response = self.disable()
+
+        self.assertEqual(response.json()['removed_assignments'], 0)
+        self.assertEqual(response.json()['notified_sessions'], [])
+        self.assertFalse(self.disabled_notifications().exists())
+
+    def test_finished_conference_assignments_are_kept(self):
+        today = date.today()
+        finished = Conference.objects.create(
+            title='Terminada', description='Terminada',
+            start_date=today - timedelta(days=30), end_date=today - timedelta(days=1),
+        )
+        session = self.create_session(finished, 'Sesión vieja', self.session_chair)
+        assignment = self.create_assignment(session, 'Viejo')
+
+        self.disable()
+
+        assignment.refresh_from_db()
+        self.assertFalse(assignment.deleted)
+        self.assertFalse(self.disabled_notifications().exists())
+
+    def test_chair_conflict_leaves_assignments_untouched(self):
+        self.session.chairs.set([self.reviewer])
+        assignment = self.create_assignment(self.session, 'Artículo')
+
+        response = self.disable()
+
+        self.assertEqual(response.status_code, 409)
+        assignment.refresh_from_db()
+        self.assertFalse(assignment.deleted)
+        self.assertFalse(self.disabled_notifications().exists())

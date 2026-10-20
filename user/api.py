@@ -140,6 +140,7 @@ class UpdateUserStatusAPI(APIView):
         if not is_active and user.id == request.user_id:
             return JsonResponse({'error': 'No podés deshabilitar tu propia cuenta.'}, status=400)
 
+        summary = {}
         with transaction.atomic():
             if is_active:
                 # Al rehabilitar solo cambia el estado: no se restauran roles.
@@ -147,7 +148,7 @@ class UpdateUserStatusAPI(APIView):
                 user.save(update_fields=['is_active'])
             else:
                 try:
-                    disable_user(user)
+                    summary = disable_user(user)
                 except ChairConflictError as error:
                     return JsonResponse({
                         'error': 'No se puede deshabilitar al usuario: es el único chair de las siguientes conferencias o sesiones.',
@@ -163,7 +164,8 @@ class UpdateUserStatusAPI(APIView):
                 'affiliation': user.affiliation,
                 'role': user.role,
                 'is_active': user.is_active,
-            }
+            },
+            **summary,
         }, status=200)
 
 class GetUserFullDataAPI(APIView):
