@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from .models import User
 from .serializers import UserSerializer
 from rest_framework.permissions import AllowAny
+from .permissions import IsAdminUser
 
 class UserRegisterAPI(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -83,12 +84,11 @@ class GetUserIdAPI(APIView):
             'role': usuario.role,
         }, status=200)
     
-# Creado por el Grupo 1 para traer todos los usuarios de la base de datos
-# Se requiere para poder seleccionar los autores de un articulo
-# No esta protegido por JWT pero deberia estarlo de alguna forma, se deja asi para facilitar el merge
 class GetUserListAPI(APIView):
+    permission_classes = [IsAdminUser]
+
     def get(self, request):
-        usuarios = User.objects.all()
+        usuarios = User.objects.all().order_by('full_name', 'id')
         usuarios_data = [
             {
                 'id': usuario.id,
@@ -96,6 +96,7 @@ class GetUserListAPI(APIView):
                 'email': usuario.email,
                 'affiliation': usuario.affiliation,
                 'role': usuario.role,
+                'is_active': usuario.is_active,
             } for usuario in usuarios
         ]
         return JsonResponse(usuarios_data, safe=False, status=200)
