@@ -21,6 +21,7 @@ from .serializers import UserSerializer
 from rest_framework.permissions import AllowAny
 from .permissions import IsAdminUser
 from .middleware import ACCOUNT_DISABLED_ERROR
+from .disable import ChairConflictError, disable_user, get_disable_check
 
 class UserRegisterAPI(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -112,6 +113,17 @@ class GetUserListAPI(APIView):
         ]
         return JsonResponse(usuarios_data, safe=False, status=200)
 
+class DisableCheckAPI(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, user_id):
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+
+        return JsonResponse(get_disable_check(user), status=200)
+
 class UpdateUserStatusAPI(APIView):
     permission_classes = [IsAdminUser]
 
@@ -128,10 +140,19 @@ class UpdateUserStatusAPI(APIView):
         if not is_active and user.id == request.user_id:
             return JsonResponse({'error': 'No podés deshabilitar tu propia cuenta.'}, status=400)
 
-        # Al rehabilitar solo cambia el estado: no se restauran roles.
         with transaction.atomic():
-            user.is_active = is_active
-            user.save(update_fields=['is_active'])
+            if is_active:
+                # Al rehabilitar solo cambia el estado: no se restauran roles.
+                user.is_active = True
+                user.save(update_fields=['is_active'])
+            else:
+                try:
+                    disable_user(user)
+                except ChairConflictError as error:
+                    return JsonResponse({
+                        'error': 'No se puede deshabilitar al usuario: es el único chair de las siguientes conferencias o sesiones.',
+                        'conflicts': error.conflicts,
+                    }, status=409)
 
         return JsonResponse({
             'message': 'Usuario habilitado correctamente.' if is_active else 'Usuario deshabilitado correctamente.',

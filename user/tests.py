@@ -9,6 +9,7 @@ from article.models import Article
 from conference.models import Conference
 from conference_session.models import Session
 from reviewer.models import Bid
+from chair.models import ReviewAssignment
 from user.models import User
 
 
@@ -267,3 +268,161 @@ class UserSelectorsTests(UserTestCase):
         self.assertIn('active@example.com', emails)
         self.assertNotIn('inactive@example.com', emails)
         self.assertNotIn('inactive-bidder@example.com', emails)
+
+
+class DisableUserChairsTests(UserTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = self.create_user('admin@example.com', role='admin')
+        self.user = self.create_user('chair@example.com')
+        self.other = self.create_user('other-chair@example.com')
+        self.authenticate(self.admin)
+        today = date.today()
+        self.conference = self.create_conference('Activa', today, today + timedelta(days=30))
+        self.finished_conference = self.create_conference(
+            'Terminada', today - timedelta(days=30), today - timedelta(days=1)
+        )
+
+    def create_conference(self, title, start, end, *chairs):
+        conference = Conference.objects.create(
+            title=title, description=title, start_date=start, end_date=end
+        )
+        conference.chairs.set(chairs)
+        return conference
+
+    def create_session(self, conference, title, *chairs):
+        session = Session.objects.create(
+            title=title, deadline=conference.end_date, capacity=10, conference=conference
+        )
+        session.chairs.set(chairs)
+        return session
+
+    def check(self):
+        return self.client.get(reverse('user-disable-check', args=[self.user.id]))
+
+    def disable(self):
+        return self.client.patch(
+            reverse('update-user-status', args=[self.user.id]), {'is_active': False}, format='json'
+        )
+
+    def test_user_without_chair_roles_can_be_disabled(self):
+        data = self.check().json()
+
+        self.assertTrue(data['can_disable'])
+        self.assertEqual(data['conflicts'], [])
+        self.assertEqual(data['chair_removals'], [])
+        self.assertEqual(self.disable().status_code, 200)
+
+    def test_sole_conference_chair_is_a_conflict(self):
+        self.conference.chairs.set([self.user])
+
+        data = self.check().json()
+        response = self.disable()
+
+        self.assertFalse(data['can_disable'])
+        self.assertEqual(data['conflicts'], [{'type': 'conference', 'id': self.conference.id, 'title': 'Activa'}])
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()['conflicts'], data['conflicts'])
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_active)
+        self.assertIn(self.user, self.conference.chairs.all())
+
+    def test_sole_session_chair_is_a_conflict_even_if_conference_has_chairs(self):
+        self.conference.chairs.set([self.other])
+        session = self.create_session(self.conference, 'Sesión IA', self.user)
+
+        data = self.check().json()
+
+        self.assertEqual(data['conflicts'], [{
+            'type': 'session',
+            'id': session.id,
+            'title': 'Sesión IA',
+            'conference_id': self.conference.id,
+            'conference_title': 'Activa',
+        }])
+        self.assertEqual(self.disable().status_code, 409)
+
+    def test_shared_chair_is_removed_when_disabled(self):
+        self.conference.chairs.set([self.user, self.other])
+        session = self.create_session(self.conference, 'Sesión IA', self.user, self.other)
+
+        data = self.check().json()
+        response = self.disable()
+
+        self.assertTrue(data['can_disable'])
+        self.assertEqual([item['type'] for item in data['chair_removals']], ['conference', 'session'])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(list(self.conference.chairs.all()), [self.other])
+        self.assertEqual(list(session.chairs.all()), [self.other])
+
+    def test_inactive_chair_does_not_count_as_other_chair(self):
+        inactive = self.create_user('inactive-chair@example.com', is_active=False)
+        self.conference.chairs.set([self.user, inactive])
+
+        self.assertFalse(self.check().json()['can_disable'])
+        self.assertEqual(self.disable().status_code, 409)
+
+    def test_can_be_disabled_after_resolving_the_conflict(self):
+        self.conference.chairs.set([self.user])
+        self.assertEqual(self.disable().status_code, 409)
+
+        self.conference.chairs.add(self.other)
+
+        self.assertEqual(self.disable().status_code, 200)
+        self.assertEqual(list(self.conference.chairs.all()), [self.other])
+
+    def test_finished_conference_is_kept_as_history(self):
+        self.finished_conference.chairs.set([self.user])
+        session = self.create_session(self.finished_conference, 'Sesión vieja', self.user)
+
+        data = self.check().json()
+        response = self.disable()
+
+        self.assertTrue(data['can_disable'])
+        self.assertEqual(data['conflicts'], [])
+        self.assertEqual(data['chair_removals'], [])
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(self.user, self.finished_conference.chairs.all())
+        self.assertIn(self.user, session.chairs.all())
+
+    def test_enabling_does_not_check_conflicts(self):
+        self.conference.chairs.set([self.user])
+        self.user.is_active = False
+        self.user.save()
+
+        response = self.client.patch(
+            reverse('update-user-status', args=[self.user.id]), {'is_active': True}, format='json'
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_check_lists_pending_reviews_by_session(self):
+        session = self.create_session(self.conference, 'Sesión IA', self.other)
+        pending = Article.objects.create(
+            title='Pendiente', main_file='articles/a.pdf', type='regular',
+            abstract='Abstract', corresponding_author=self.other, session=session,
+        )
+        reviewed = Article.objects.create(
+            title='Revisado', main_file='articles/b.pdf', type='regular',
+            abstract='Abstract', corresponding_author=self.other, session=session,
+        )
+        ReviewAssignment.objects.create(reviewer=self.user, article=pending)
+        ReviewAssignment.objects.create(reviewer=self.user, article=reviewed, reviewed=True)
+
+        data = self.check().json()
+
+        self.assertEqual(data['pending_reviews'], [{
+            'session_id': session.id,
+            'session_title': 'Sesión IA',
+            'articles': [{'id': pending.id, 'title': 'Pendiente'}],
+        }])
+
+    def test_check_requires_admin(self):
+        self.authenticate(self.create_user('common@example.com'))
+
+        self.assertEqual(self.check().status_code, 403)
+
+    def test_check_unknown_user_returns_not_found(self):
+        response = self.client.get(reverse('user-disable-check', args=[9999]))
+
+        self.assertEqual(response.status_code, 404)
