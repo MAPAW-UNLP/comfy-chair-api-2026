@@ -7,7 +7,6 @@ from django.db.models import Q
 from .models import Conference
 from .serializers import ConferenceSerializer
 from django.utils import timezone
-from django.db.models import Q
 from .permissions import IsAdmin
 from user.models import User
 
@@ -131,7 +130,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         search = self.request.query_params.get('search')
-        if search and search.strip():
+        if self.action in ('list', 'finished', 'active') and search and search.strip():
             search = search.strip()
             queryset = queryset.filter(
                 Q(title__icontains=search) | Q(description__icontains=search)
