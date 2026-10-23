@@ -22,6 +22,8 @@ from rest_framework.permissions import AllowAny
 from .permissions import IsAdminUser
 from .middleware import ACCOUNT_DISABLED_ERROR
 from .disable import ChairConflictError, disable_user, get_disable_check
+from .chair_requests import ChairRequestError, pending_request_data, request_conference_chair
+from conference_session.models import Session
 
 class UserRegisterAPI(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -167,6 +169,39 @@ class UpdateUserStatusAPI(APIView):
             },
             **summary,
         }, status=200)
+
+class ChairReplacementRequestAPI(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, user_id):
+        session_id = request.data.get('session_id')
+        if not isinstance(session_id, int) or isinstance(session_id, bool):
+            return JsonResponse({'error': 'El campo session_id es obligatorio y debe ser un número.'}, status=400)
+
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+
+        session = Session.objects.select_related('conference').filter(pk=session_id).first()
+        if session is None:
+            return JsonResponse({'error': 'Sesión no encontrada'}, status=404)
+
+        admin = User.objects.get(pk=request.user_id)
+        try:
+            with transaction.atomic():
+                chair_request, chairs, created = request_conference_chair(user, session, admin)
+        except ChairRequestError as error:
+            return JsonResponse({'error': str(error)}, status=400)
+
+        return JsonResponse({
+            **pending_request_data(chair_request),
+            'session_id': session.id,
+            'session_title': session.title,
+            'conference_id': session.conference_id,
+            'conference_title': session.conference.title,
+            'notified_chairs': [chair.full_name for chair in chairs],
+        }, status=201 if created else 200)
 
 class GetUserFullDataAPI(APIView):
     def get(self, request):

@@ -1,6 +1,12 @@
 from django.utils import timezone
 from chair.models import ReviewAssignment
 from notification.models import Notification
+from .chair_requests import (
+    can_request_conference_chair,
+    close_pending_requests,
+    get_pending_request,
+    pending_request_data,
+)
 
 
 class ChairConflictError(Exception):
@@ -33,6 +39,14 @@ def _session_data(session):
     }
 
 
+def _session_conflict_data(session, user):
+    return {
+        **_session_data(session),
+        'can_request_conference_chair': can_request_conference_chair(session, user),
+        'pending_request': pending_request_data(get_pending_request(session, user)),
+    }
+
+
 def get_chair_impact(user):
     conferences = user.conferences.filter(**active_conference_filter()).order_by('title')
     sessions = (
@@ -47,8 +61,10 @@ def get_chair_impact(user):
         impact[key].append(_conference_data(conference))
         impact['conferences'].append(conference)
     for session in sessions:
-        key = 'chair_removals' if _has_other_active_chair(session, user) else 'conflicts'
-        impact[key].append(_session_data(session))
+        if _has_other_active_chair(session, user):
+            impact['chair_removals'].append(_session_data(session))
+        else:
+            impact['conflicts'].append(_session_conflict_data(session, user))
         impact['sessions'].append(session)
     return impact
 
@@ -142,6 +158,7 @@ def disable_user(user):
     if impact['conflicts']:
         raise ChairConflictError(impact['conflicts'])
 
+    close_pending_requests(user)
     for conference in impact['conferences']:
         conference.chairs.remove(user)
     for session in impact['sessions']:
