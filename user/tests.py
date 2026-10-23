@@ -2,7 +2,9 @@ from datetime import date, datetime, timedelta, timezone
 
 import jwt
 from django.conf import settings
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from rest_framework.test import APIClient
 from article.models import Article
@@ -581,3 +583,111 @@ class DisableReviewerTests(UserTestCase):
         assignment.refresh_from_db()
         self.assertFalse(assignment.deleted)
         self.assertFalse(self.disabled_notifications().exists())
+
+
+class ChairsDetailTests(UserTestCase):
+    def setUp(self):
+        super().setUp()
+        self.admin = self.create_user('admin@example.com', role='admin')
+        self.zoe = self.create_user('zoe@example.com', full_name='Zoe')
+        self.bruno = self.create_user('bruno@example.com', full_name='Bruno', is_active=False)
+        self.session_chair = self.create_user('session-chair@example.com', full_name='Sofía')
+        self.authenticate(self.admin)
+        self.conference = self.create_conference('Activa', self.zoe, self.bruno)
+        self.session = self.create_session(self.conference, 'Sesión IA', self.session_chair)
+
+    def create_conference(self, title, *chairs):
+        today = date.today()
+        conference = Conference.objects.create(
+            title=title, description=title, start_date=today, end_date=today + timedelta(days=30)
+        )
+        conference.chairs.set(chairs)
+        return conference
+
+    def create_session(self, conference, title, *chairs):
+        session = Session.objects.create(
+            title=title, deadline=conference.end_date, capacity=10, conference=conference
+        )
+        session.chairs.set(chairs)
+        return session
+
+    def summary(self, user):
+        return {'id': user.id, 'full_name': user.full_name, 'email': user.email}
+
+    def test_conference_detail_includes_chairs_detail(self):
+        response = self.client.get(reverse('conference-detail', args=[self.conference.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['chairs_detail'], [self.summary(self.bruno), self.summary(self.zoe)])
+
+    def test_session_detail_includes_chairs_detail(self):
+        response = self.client.get(reverse('session-detail', args=[self.session.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['chairs_detail'], [self.summary(self.session_chair)])
+
+    def test_disabled_chair_is_included_without_is_active(self):
+        data = self.client.get(reverse('conference-detail', args=[self.conference.id])).json()
+
+        bruno = next(chair for chair in data['chairs_detail'] if chair['id'] == self.bruno.id)
+        self.assertNotIn('is_active', bruno)
+
+    def test_chairs_keeps_the_list_of_ids(self):
+        data = self.client.get(reverse('conference-detail', args=[self.conference.id])).json()
+
+        self.assertCountEqual(data['chairs'], [self.zoe.id, self.bruno.id])
+
+    def test_create_and_edit_conference_with_chairs(self):
+        today = date.today()
+        response = self.client.post(reverse('conference-list'), {
+            'title': 'Nueva', 'description': 'Nueva', 'start_date': today, 'end_date': today + timedelta(days=10),
+            'blind_kind': 'single blind', 'chairs': [self.zoe.id], 'user_id': self.admin.id,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.json())
+        self.assertEqual(response.json()['chairs_detail'], [self.summary(self.zoe)])
+
+        response = self.client.patch(
+            reverse('conference-detail', args=[response.json()['id']]),
+            {'chairs': [self.session_chair.id], 'user_id': self.admin.id}, format='json'
+        )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json()['chairs'], [self.session_chair.id])
+        self.assertEqual(response.json()['chairs_detail'], [self.summary(self.session_chair)])
+
+    def test_edit_session_with_chairs(self):
+        response = self.client.patch(
+            reverse('session-detail', args=[self.session.id]), {'chairs': [self.admin.id]}, format='json'
+        )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        self.assertEqual(response.json()['chairs_detail'], [self.summary(self.admin)])
+
+    def test_nested_serializers_do_not_include_chairs_detail(self):
+        Article.objects.create(
+            title='Artículo', main_file='articles/a.pdf', type='regular',
+            abstract='Abstract', corresponding_author=self.zoe, session=self.session,
+        )
+
+        session = self.client.get(reverse('session-detail', args=[self.session.id])).json()
+        articles = self.client.get(reverse('session-articles', args=[self.session.id])).json()
+
+        self.assertNotIn('chairs_detail', session['conference'])
+        self.assertNotIn('chairs_detail', articles[0]['session'])
+        self.assertNotIn('chairs_detail', articles[0]['session']['conference'])
+
+    def test_lists_do_not_add_queries_per_item(self):
+        def count_queries(url):
+            with CaptureQueriesContext(connection) as context:
+                self.assertEqual(self.client.get(url).status_code, 200)
+            return len(context)
+
+        conference_queries = count_queries(reverse('conference-list'))
+        session_queries = count_queries(reverse('session-list'))
+        for index in range(3):
+            conference = self.create_conference(f'Otra {index}', self.zoe, self.bruno)
+            self.create_session(conference, f'Sesión {index}', self.session_chair)
+
+        self.assertEqual(count_queries(reverse('conference-list')), conference_queries)
+        self.assertEqual(count_queries(reverse('session-list')), session_queries)
