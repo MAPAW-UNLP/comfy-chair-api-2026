@@ -10,7 +10,8 @@ class ArticleQuerySet(models.QuerySet):
         #Retorna artículos de una sesión con todas sus asignaciones revisadas,
         #calculando el promedio de puntajes ordenado descendentemente.
         return (
-            self.filter(
+            self.exclude(status='draft')
+            .filter(
                 session=session,
                 reviewassignment__reviewed=True,
                 reviewassignment__deleted=False,
@@ -36,6 +37,7 @@ class Article(models.Model):
 
     # Estados posibles de un Articulo
     STATUS_CHOICES = [
+        ('draft', 'Borrador'),
         ('reception', 'Recepción'),
         ('bidding', 'Bidding'),
         ('assignment', 'Asignación'),
@@ -47,10 +49,10 @@ class Article(models.Model):
 
     # Atributos
     title = models.CharField(max_length=200)
-    main_file = models.FileField(upload_to='articles/')
+    main_file = models.FileField(upload_to='articles/', blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='reception')
-    type = models.CharField(max_length=10, choices=ARTICLE_TYPE_CHOICES)
-    abstract = models.TextField(max_length=300)
+    type = models.CharField(max_length=10, choices=ARTICLE_TYPE_CHOICES, blank=True, null=True)
+    abstract = models.TextField(max_length=300, blank=True, null=True)
 
     # Relaciones 
     authors = models.ManyToManyField(User, related_name='article')
