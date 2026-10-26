@@ -747,9 +747,19 @@ class ChairReplacementRequestTests(UserTestCase):
         ).exists())
         notification = self.notifications('Sesión sin chair').get()
         self.assertEqual(notification.user, self.conference_chair)
+        self.assertEqual(notification.session, self.session)
         self.assertEqual(notification.type, 'critical')
         self.assertIn('Carla Chair', notification.message)
         self.assertIn('Sesión IA', notification.message)
+
+        self.authenticate(self.conference_chair)
+        notifications_response = self.client.get(reverse('user-notifications'))
+        self.assertEqual(notifications_response.status_code, 200)
+        notification_data = next(
+            item for item in notifications_response.json()
+            if item['id'] == notification.id
+        )
+        self.assertEqual(notification_data['session'], self.session.id)
 
     def test_repeated_request_returns_the_pending_one_without_notifying(self):
         first = self.request_chair().json()

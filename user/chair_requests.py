@@ -56,7 +56,13 @@ def request_conference_chair(user, session, admin):
         f'que es el único chair de la sesión "{session.title}". Asigná otro chair a esa sesión.'
     )
     Notification.objects.bulk_create([
-        Notification(user=chair, title='Sesión sin chair', message=message, type='critical')
+        Notification(
+            user=chair,
+            session=session,
+            title='Sesión sin chair',
+            message=message,
+            type='critical',
+        )
         for chair in chairs
     ])
     return chair_request, chairs, True
