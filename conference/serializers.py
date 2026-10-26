@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Conference
+from user.models import User
 from datetime import date
 
 class ConferenceSerializerGrupo1(serializers.ModelSerializer):
@@ -88,3 +89,22 @@ class ConferenceSerializer(serializers.ModelSerializer):
 
         
         return data
+
+
+# Grupo 3 (2026)
+class ChairSummarySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'full_name', 'email']
+
+
+def chairs_summary(obj):
+    chairs = sorted(obj.chairs.all(), key=lambda user: user.full_name.casefold())
+    return ChairSummarySerializer(chairs, many=True).data
+
+
+class ConferenceDetailSerializer(ConferenceSerializer):
+    chairs_detail = serializers.SerializerMethodField()
+
+    def get_chairs_detail(self, obj):
+        return chairs_summary(obj)

@@ -13,7 +13,7 @@ from conference_session.models import Session
 from notification.models import Notification
 from user.disable import _group_by_session, _notification_recipients
 from .models import Conference
-from .serializers import ConferenceSerializer
+from .serializers import ConferenceDetailSerializer
 from django.utils import timezone
 from .permissions import IsAdmin
 from user.models import User
@@ -49,8 +49,8 @@ class ConferenceUserRoleSerializer(serializers.Serializer):
 
 
 class ConferenceViewSet(viewsets.ModelViewSet):
-    queryset = Conference.objects.all().order_by('-id')
-    serializer_class = ConferenceSerializer
+    queryset = Conference.objects.prefetch_related('chairs').order_by('-id')
+    serializer_class = ConferenceDetailSerializer
     permission_classes = [IsAdmin]
 #para poder editar en chairs las ventanas de envio articulos y revision grupo5
     def get_permissions(self):

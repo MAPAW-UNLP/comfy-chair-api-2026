@@ -12,7 +12,8 @@ from .api import (
     GetUserFullDataAPI, 
     GetSessionReviewersAPI,
     UpdateUserStatusAPI,
-    DisableCheckAPI
+    DisableCheckAPI,
+    ChairReplacementRequestAPI
 )
 
 urlpatterns = [
@@ -25,6 +26,7 @@ urlpatterns = [
     path('getCommonUsers/', GetUsersNoAdminAPI.as_view(), name='common-users-list'), # Creado por Grupo 3 para obtener usuarios comunes
     path('<int:user_id>/status/', UpdateUserStatusAPI.as_view(), name='update-user-status'), # Creado por Grupo 3 (2026): habilitar/deshabilitar usuarios, solo para admin
     path('<int:user_id>/disable-check/', DisableCheckAPI.as_view(), name='user-disable-check'), # Creado por Grupo 3 (2026): qué pasaría al deshabilitar un usuario, solo para admin
+    path('<int:user_id>/chair-requests/', ChairReplacementRequestAPI.as_view(), name='user-chair-requests'), # Creado por Grupo 3 (2026): pedir al chair de conferencia que reemplace al único chair de una sesión, solo para admin
     path('update/', UpdateUserDataAPI.as_view(), name='update-user-data'),
     path('update-password/', UpdateUserPasswordAPI.as_view(), name='update-user-password'),
     path('sessions/<int:session_id>/reviewers/', GetSessionReviewersAPI.as_view(), name='session-reviewers'),
