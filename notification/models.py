@@ -17,6 +17,14 @@ class Notification(models.Model):
         blank=True,
         related_name='notifications',
     )
+    # Grupo 3 (2026)
+    related_user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
     title = models.CharField(max_length=100)
     message = models.TextField()
     type = models.CharField(max_length=10, choices=TYPE_CHOICES, default="info")

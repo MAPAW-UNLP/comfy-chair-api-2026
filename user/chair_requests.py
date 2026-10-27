@@ -78,6 +78,7 @@ def resolve_requests(requests):
         if chair_request.requested_by is not None:
             Notification.objects.create(
                 user=chair_request.requested_by,
+                related_user=chair_request.user,
                 title='Conflicto resuelto',
                 message=(
                     f'La sesión "{chair_request.session.title}" ya tiene otro chair. '
