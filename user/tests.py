@@ -838,6 +838,12 @@ class ChairReplacementRequestTests(UserTestCase):
         notification = self.notifications('Conflicto resuelto', self.admin).get()
         self.assertEqual(notification.type, 'info')
         self.assertIn('Carla Chair', notification.message)
+        self.assertEqual(notification.related_user, self.user)
+        notification_data = next(
+            item for item in self.client.get(reverse('user-notifications')).json()
+            if item['id'] == notification.id
+        )
+        self.assertEqual(notification_data['related_user'], self.user.id)
 
     def test_removing_the_user_from_the_session_resolves_the_request(self):
         self.request_chair()
