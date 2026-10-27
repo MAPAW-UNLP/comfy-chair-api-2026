@@ -223,3 +223,62 @@ class BidFiltrosTests(BidTestCase):
         cliente = self.cliente(self.revisor)
         with self.assertNumQueries(1):
             cliente.get("/api/bids/", {"conference_id": self.conferencia.id})
+
+
+class BidAutorTests(BidTestCase):
+    AUTOR_NO_PUEDE_OFERTAR = {"error": "No podés ofertar por un artículo del que sos autor"}
+
+    def postear_como(self, usuario, choice="Interesado"):
+        return self.cliente(usuario).post(
+            "/api/bidding/", {"article": self.articulo.id, "choice": choice}, format="json"
+        )
+
+    def notificaciones_de_bidding(self):
+        return Notification.objects.filter(title__startswith="Bidding")
+
+    def test_coautor_no_puede_ofertar_por_su_articulo(self):
+        self.articulo.authors.add(self.revisor)
+        for choice, _ in Bid.STATE_CHOICES:
+            with self.subTest(choice=choice):
+                respuesta = self.postear_como(self.revisor, choice)
+                self.assertEqual(respuesta.status_code, 403)
+                self.assertEqual(respuesta.json(), self.AUTOR_NO_PUEDE_OFERTAR)
+        self.assertFalse(Bid.objects.exists())
+        self.assertFalse(self.notificaciones_de_bidding().exists())
+
+    def test_autor_de_notificacion_no_puede_ofertar_por_su_articulo(self):
+        respuesta = self.postear_como(self.autor)
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(respuesta.json(), self.AUTOR_NO_PUEDE_OFERTAR)
+        self.assertFalse(Bid.objects.exists())
+
+    def test_put_sobre_un_bid_previo_del_autor_responde_403_y_no_lo_modifica(self):
+        bid = Bid.objects.create(reviewer=self.autor, article=self.articulo, choice="Interesado")
+        respuesta = self.cliente(self.autor).put(f"/api/bidding/{bid.id}/", {"choice": "No_select"}, format="json")
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(respuesta.json(), self.AUTOR_NO_PUEDE_OFERTAR)
+        bid.refresh_from_db()
+        self.assertEqual(bid.choice, "Interesado")
+
+    def test_put_sobre_bid_ajeno_de_un_autor_sigue_respondiendo_bid_ajeno(self):
+        bid = Bid.objects.create(reviewer=self.autor, article=self.articulo, choice="Interesado")
+        respuesta = self.cliente(self.revisor).put(f"/api/bidding/{bid.id}/", {"choice": "Quizás"}, format="json")
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(respuesta.json(), {"error": "No podés modificar un bid ajeno"})
+
+    def test_quien_no_es_autor_sigue_pudiendo_ofertar(self):
+        self.articulo.authors.add(self.autor)
+        respuesta = self.postear_como(self.revisor)
+        self.assertEqual(respuesta.status_code, 201)
+        self.assertEqual(Bid.objects.get().reviewer, self.revisor)
+
+    def test_ser_autor_de_otro_articulo_no_impide_ofertar(self):
+        propio = self.crear_articulo(self.sesion)
+        propio.authors.add(self.revisor)
+        respuesta = self.postear_como(self.revisor)
+        self.assertEqual(respuesta.status_code, 201)
+
+    def test_un_choice_invalido_sigue_respondiendo_400_aunque_sea_autor(self):
+        respuesta = self.postear_como(self.autor, "interested")
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertEqual(respuesta.json(), {"error": "Opción de interés inválida"})

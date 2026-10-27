@@ -14,7 +14,7 @@ from chair.models import ReviewAssignment
 from conference.models import Conference
 from conference_session.models import Session
 from reviewer.integrations import bidding_window, review_window
-from reviewer.conflicts import AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
+from reviewer.conflicts import AUTHOR_CANNOT_BID_ERROR, AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
 from reviewer.serializers import (
     ReviewUpdateSerializer,
     ReviewerDetailSerializer,
@@ -56,9 +56,13 @@ class BiddingView(APIView):
         serializer = BidSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({"error": "Opción de interés inválida"}, status=status.HTTP_400_BAD_REQUEST)
+        uid = getattr(request, "user_id", None)
+        article = serializer.validated_data["article"]
+        if is_article_author(uid, article):
+            return Response({"error": AUTHOR_CANNOT_BID_ERROR}, status=status.HTTP_403_FORBIDDEN)
         bid, created = Bid.objects.update_or_create(
-            reviewer_id=getattr(request, "user_id", None),
-            article=serializer.validated_data["article"],
+            reviewer_id=uid,
+            article=article,
             defaults={"choice": serializer.validated_data["choice"]},
         )
         return Response(
@@ -76,6 +80,8 @@ class BiddingUpdateView(APIView):
             return Response({"error": "Bid no encontrado"}, status=status.HTTP_404_NOT_FOUND)
         if bid.reviewer_id != getattr(request, "user_id", None):
             return Response({"error": "No podés modificar un bid ajeno"}, status=status.HTTP_403_FORBIDDEN)
+        if is_article_author(bid.reviewer_id, bid.article_id):
+            return Response({"error": AUTHOR_CANNOT_BID_ERROR}, status=status.HTTP_403_FORBIDDEN)
         serializer = BidUpdateSerializer(bid, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
