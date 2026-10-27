@@ -379,9 +379,9 @@ class ConferenceViewSet(viewsets.ModelViewSet):
                     for assignment in group['assignments']
                 )
                 message = (
-                    f'Se quitó el rol de revisor a {target.full_name} (ID: {target.pk}) '
-                    f'en la conferencia "{conference.title}" (ID: {conference.pk}). '
-                    f'En la sesión "{session.title}" (ID: {session.pk}) quedaron sin '
+                    f'Se quitó el rol de revisor a {target.full_name} '
+                    f'en la conferencia "{conference.title}". '
+                    f'En la sesión "{session.title}" quedaron sin '
                     f'revisor las asignaciones pendientes de: {titles}. Asigná nuevos '
                     'revisores para esos artículos.'
                 )
@@ -389,6 +389,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
                 notifications.extend(
                     Notification(
                         user_id=chair.pk,
+                        session=session,
                         title='Reasignar revisiones pendientes',
                         message=message,
                         type='critical',
