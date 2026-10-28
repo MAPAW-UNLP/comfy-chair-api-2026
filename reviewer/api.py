@@ -12,7 +12,9 @@ from reviewer.models import Review, Article, Bid, ReviewVersion, User, ReviewerI
 from article.models import ArticleHistory
 from chair.models import ReviewAssignment
 from conference.models import Conference
-from reviewer.conflicts import AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
+from conference_session.models import Session
+from reviewer.integrations import bidding_window, review_window
+from reviewer.conflicts import AUTHOR_CANNOT_BID_ERROR, AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
 from reviewer.serializers import (
     ReviewUpdateSerializer,
     ReviewerDetailSerializer,
@@ -21,6 +23,7 @@ from reviewer.serializers import (
     ReviewSerializer,
     ReviewVersionSerializer,
     PublicReviewSerializer,
+    ChairReviewSerializer,
     ReviewerAssignmentSerializer,
     ReviewerInvitationSerializer,
     ReviewerInvitationDetailSerializer,
@@ -53,9 +56,13 @@ class BiddingView(APIView):
         serializer = BidSerializer(data=request.data)
         if not serializer.is_valid():
             return Response({"error": "Opción de interés inválida"}, status=status.HTTP_400_BAD_REQUEST)
+        uid = getattr(request, "user_id", None)
+        article = serializer.validated_data["article"]
+        if is_article_author(uid, article):
+            return Response({"error": AUTHOR_CANNOT_BID_ERROR}, status=status.HTTP_403_FORBIDDEN)
         bid, created = Bid.objects.update_or_create(
-            reviewer_id=getattr(request, "user_id", None),
-            article=serializer.validated_data["article"],
+            reviewer_id=uid,
+            article=article,
             defaults={"choice": serializer.validated_data["choice"]},
         )
         return Response(
@@ -73,6 +80,8 @@ class BiddingUpdateView(APIView):
             return Response({"error": "Bid no encontrado"}, status=status.HTTP_404_NOT_FOUND)
         if bid.reviewer_id != getattr(request, "user_id", None):
             return Response({"error": "No podés modificar un bid ajeno"}, status=status.HTTP_403_FORBIDDEN)
+        if is_article_author(bid.reviewer_id, bid.article_id):
+            return Response({"error": AUTHOR_CANNOT_BID_ERROR}, status=status.HTTP_403_FORBIDDEN)
         serializer = BidUpdateSerializer(bid, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -361,6 +370,31 @@ class ReviewsArticleView(APIView):
             "count": reviews.count(),
             "reviews": serializer.data,
         })
+
+
+# GET /api/article/<int:article_id>/reviews/confidential/
+class ConfidentialArticleReviewsView(APIView):
+    def get(self, request, article_id):
+        uid = getattr(request, "user_id", None)
+        article = Article.objects.select_related("session__conference").filter(id=article_id).first()
+        if article is None:
+            return Response({"error": "Artículo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        session = article.session
+        is_chair = session is not None and (
+            session.chairs.filter(id=uid).exists() or session.conference.chairs.filter(id=uid).exists()
+        )
+        if not is_chair:
+            return Response(
+                {"error": "No tenés permiso de Chair para ver los comentarios confidenciales de este artículo"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        reviews = Review.objects.filter(article=article, is_published=True).select_related("reviewer").order_by("id")
+        return Response({
+            "article_id": article.id,
+            "reviews": ChairReviewSerializer(reviews, many=True).data,
+        }, status=status.HTTP_200_OK)
 
 
 # GET /api/reviews/{articleId}/{reviewerId}/
@@ -672,3 +706,21 @@ class ReviewerArticleAssignmentView(APIView):
         if reason:
             return Response({'error': reason}, status=status.HTTP_403_FORBIDDEN)
         return Response({'assigned': True}, status=status.HTTP_200_OK)
+
+
+# GET /api/reviewer/sessions/{session_id}/periods/
+class SessionPeriodsView(APIView):
+    def get(self, request, session_id):
+        if not getattr(request, 'user_id', None):
+            return Response({'error': 'Autenticación requerida'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        session = Session.objects.select_related('conference').filter(id=session_id).first()
+        if session is None:
+            return Response({'error': 'Sesión no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        now = timezone.now()
+        return Response({
+            'session_id': session.id,
+            'server_now': now,
+            'bidding': bidding_window(session).as_dict(now),
+            'review': review_window(session).as_dict(now),
+        }, status=status.HTTP_200_OK)

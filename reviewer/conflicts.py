@@ -6,6 +6,7 @@ from article.models import Article
 
 AUTHOR_CANNOT_REVIEW_ERROR = "No podés revisar un artículo del que sos autor"
 AUTHOR_CANNOT_BE_ASSIGNED_ERROR = "No se puede asignar a un autor como revisor de su propio artículo"
+AUTHOR_CANNOT_BID_ERROR = "No podés ofertar por un artículo del que sos autor"
 
 
 def is_article_author(user, article):
