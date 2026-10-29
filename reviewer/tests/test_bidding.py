@@ -221,5 +221,6 @@ class BidFiltrosTests(BidTestCase):
 
     def test_una_sola_consulta_sin_importar_la_cantidad_de_bids(self):
         cliente = self.cliente(self.revisor)
-        with self.assertNumQueries(1):
+        # 1 consulta del middleware (estado del usuario del token) + 1 de los bids
+        with self.assertNumQueries(2):
             cliente.get("/api/bids/", {"conference_id": self.conferencia.id})

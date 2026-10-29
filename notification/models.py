@@ -10,6 +10,21 @@ class Notification(models.Model):
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
     article = models.ForeignKey(Article, on_delete=models.CASCADE, null=True, blank=True)
+    session = models.ForeignKey(
+        'conference_session.Session',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='notifications',
+    )
+    # Grupo 3 (2026)
+    related_user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='+',
+    )
     title = models.CharField(max_length=100)
     message = models.TextField()
     type = models.CharField(max_length=10, choices=TYPE_CHOICES, default="info")
@@ -18,5 +33,4 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.user.full_name} - {self.title} ({'leída' if self.read else 'no leída'})"
-
 

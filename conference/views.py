@@ -5,14 +5,14 @@ from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import ValidationError
 from django.db.models import Q
 from .models import Conference
-from .serializers import ConferenceSerializer
+from .serializers import ConferenceDetailSerializer
 from django.utils import timezone
 from .permissions import IsAdmin
 from user.models import User
 
 class ConferenceViewSet(viewsets.ModelViewSet):
-    queryset = Conference.objects.all().order_by('-id')
-    serializer_class = ConferenceSerializer
+    queryset = Conference.objects.prefetch_related('chairs').order_by('-id')
+    serializer_class = ConferenceDetailSerializer
     permission_classes = [IsAdmin]
 #para poder editar en chairs las ventanas de envio articulos y revision grupo5
     def get_permissions(self):
