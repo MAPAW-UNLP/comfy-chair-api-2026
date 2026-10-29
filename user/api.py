@@ -180,6 +180,41 @@ class GetUserFullDataAPI(APIView):
                 'score': assign.score,
                 'opinion': assign.opinion,
             })
+            # Procesar sesiones donde es chair
+            for sess in session_chairs:
+                conf_id = sess['conference__id']
+                conf_entry = conferences_data.setdefault(conf_id, {
+                    'conference_id': conf_id,
+                    'conference_name': sess['conference__title'],
+                    'sessions': {}
+                })
+                sess_entry = conf_entry['sessions'].setdefault(sess['id'], {
+                    'session_id': sess['id'],
+                    'session_name': sess['title'],
+                    'roles': {}
+                })
+                # Registramos el rol 'chair' en la sesión (sin artículos asignados)
+                sess_entry['roles'].setdefault('chair', [])
+
+            # Procesar conferencias donde es chair general
+            for conf in conference_chairs:
+                conf_entry = conferences_data.setdefault(conf['id'], {
+                    'conference_id': conf['id'],
+                    'conference_name': conf['title'],
+                    'sessions': {}
+                })
+                # Para que el frontend logre detectar el rol 'chair' y dibuje el badge en la tarjeta:
+                if not conf_entry['sessions']:
+                    # Si no había sesiones, creamos una entrada virtual
+                    conf_entry['sessions']['general'] = {
+                        'session_id': 0,
+                        'session_name': 'General',
+                        'roles': {'chair': []}
+                    }
+                else:
+                    # Si ya había sesiones (ej. porque también es autor), le agregamos el rol chair a sus datos
+                    for sess_data in conf_entry['sessions'].values():
+                        sess_data['roles'].setdefault('chair', [])
 
         # Convertir dicts a listas
         conferences_list = []
