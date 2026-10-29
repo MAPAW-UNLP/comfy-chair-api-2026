@@ -4,6 +4,7 @@ import jwt
 from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone as django_timezone
 from rest_framework.test import APIClient
 from article.models import Article
 from chair.models import ReviewAssignment
@@ -249,3 +250,55 @@ class ConferenceUsersActionTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+
+class ConferenceAlphabeticalOrderingTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        requester = User.objects.create(
+            email='ordering-requester@example.com',
+            full_name='Ordering Requester',
+            affiliation='MAPAW',
+            role='user',
+        )
+        self.client.force_authenticate(user=requester)
+        token = jwt.encode(
+            {
+                'user_id': requester.id,
+                'exp': datetime.now(timezone.utc) + timedelta(minutes=5),
+            },
+            settings.SECRET_KEY,
+            algorithm=settings.JWT_ALGORITHM,
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+        today = django_timezone.now().date()
+        conferences = (
+            ('Zeta', today + timedelta(days=30)),
+            ('delta', today - timedelta(days=1)),
+            ('alpha', today + timedelta(days=30)),
+            ('Bravo', today - timedelta(days=1)),
+        )
+        for title, end_date in conferences:
+            Conference.objects.create(
+                title=title,
+                description='Shared topic',
+                start_date=end_date - timedelta(days=7),
+                end_date=end_date,
+            )
+
+    def test_conference_lists_are_alphabetical_with_and_without_search(self):
+        expected_titles = {
+            'conference-list': ['alpha', 'Bravo', 'delta', 'Zeta'],
+            'conference-active': ['alpha', 'Zeta'],
+            'conference-finished': ['Bravo', 'delta'],
+        }
+        for endpoint, titles in expected_titles.items():
+            for params in ({}, {'search': '  SHARED  '}):
+                with self.subTest(endpoint=endpoint, params=params):
+                    response = self.client.get(reverse(endpoint), params)
+
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        [conference['title'] for conference in response.data],
+                        titles,
+                    )
