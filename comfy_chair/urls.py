@@ -21,15 +21,15 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('user/', include('user.urls')),
+    path('api/admin/', admin.site.urls),
+    path('api/user/', include('user.urls')),
     path('api/', include('article.urls')),
     path('api/', include('conference.urls')),
     path('api/', include('conference_session.urls')),
     path('api/', include('chair.urls')),
     #agregue esta linea para las urls de reviewer
     path('api/', include('reviewer.urls')),
-    path('notifications/', include('notification.urls')),
+    path('api/notifications/', include('notification.urls')),
 ]
 
 # Serve media files in development

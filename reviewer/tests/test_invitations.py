@@ -701,7 +701,7 @@ class ReviewerInvitationNotificationTests(ReviewerTestCase):
 
     def test_la_notificacion_aparece_en_el_endpoint_de_notificaciones(self):
         self.invite(make_conference('CACIC'))
-        response = self.api_get('/notifications/')
+        response = self.api_get('/api/notifications/')
         self.assertEqual(response.status_code, 200)
         self.assertIn(self.TITLE, [n['title'] for n in response.json()])
 
