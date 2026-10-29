@@ -128,14 +128,25 @@ def _release_pending_reviews(user):
         message = (
             f'El revisor {user.full_name} ({user.email}) ya no se encuentra habilitado. '
             f'Tenía asignados los siguientes artículos sin revisar en la sesión "{session.title}": '
-            f'{articles}. Asigná nuevos revisores donde haga falta.'
+            f'{articles}. La sesión pertenece a la conferencia "{session.conference.title}". '
+            'Asigná nuevos revisores donde haga falta.'
         )
-        recipients = list(_notification_recipients(session, user))
+        recipient_ids = set(
+            session.conference.chairs.filter(is_active=True, deleted=False)
+            .exclude(pk=user.pk)
+            .values_list('pk', flat=True)
+        )
         Notification.objects.bulk_create([
-            Notification(user=chair, title='Revisor deshabilitado', message=message, type='critical')
-            for chair in recipients
+            Notification(
+                user_id=recipient_id,
+                session=session,
+                title='Revisor deshabilitado',
+                message=message,
+                type='critical',
+            )
+            for recipient_id in recipient_ids
         ])
-        if recipients:
+        if recipient_ids:
             notified_sessions.append({'session_id': session.id, 'session_title': session.title})
 
     return {'removed_assignments': len(assignment_ids), 'notified_sessions': notified_sessions}

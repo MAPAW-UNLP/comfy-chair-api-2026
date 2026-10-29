@@ -494,22 +494,24 @@ class DisableReviewerTests(UserTestCase):
         self.assertFalse(reviewed.deleted)
         self.assertTrue(Review.objects.filter(pk=review.pk).exists())
 
-    def test_session_chairs_are_notified_with_the_articles(self):
+    def test_only_conference_chairs_are_notified_with_pending_reviewer_articles(self):
         self.create_assignment(self.session, 'Artículo A')
         self.create_assignment(self.session, 'Artículo B')
 
         response = self.disable()
 
-        notification = self.disabled_notifications(self.session_chair).get()
+        self.assertFalse(self.disabled_notifications(self.session_chair).exists())
+        notification = self.disabled_notifications(self.conference_chair).get()
         self.assertEqual(notification.type, 'critical')
+        self.assertEqual(notification.session_id, self.session.id)
         self.assertIn('Rita Revisora (reviewer@example.com)', notification.message)
         self.assertIn('"Sesión IA"', notification.message)
+        self.assertIn('"Activa"', notification.message)
         self.assertIn('"Artículo A", "Artículo B"', notification.message)
         self.assertEqual(
             response.json()['notified_sessions'],
             [{'session_id': self.session.id, 'session_title': 'Sesión IA'}],
         )
-        self.assertFalse(self.disabled_notifications(self.conference_chair).exists())
 
     def test_session_without_chairs_notifies_conference_chairs(self):
         session = self.create_session(self.conference, 'Sin chairs')
@@ -519,15 +521,29 @@ class DisableReviewerTests(UserTestCase):
 
         self.assertEqual(self.disabled_notifications(self.conference_chair).count(), 1)
 
+    def test_conference_chair_notification_exposes_session_id(self):
+        self.create_assignment(self.session, 'Artículo')
+        self.disable()
+
+        self.authenticate(self.conference_chair)
+        response = self.client.get(reverse('user-notifications'))
+
+        self.assertEqual(response.status_code, 200)
+        notification = next(
+            item for item in response.json()
+            if item['title'] == 'Revisor deshabilitado'
+        )
+        self.assertEqual(notification['session'], self.session.id)
+
     def test_inactive_chairs_are_not_notified(self):
         inactive = self.create_user('inactive-chair@example.com', is_active=False)
-        self.session.chairs.add(inactive)
+        self.conference.chairs.add(inactive)
         self.create_assignment(self.session, 'Artículo')
 
         self.disable()
 
         self.assertFalse(self.disabled_notifications(inactive).exists())
-        self.assertTrue(self.disabled_notifications(self.session_chair).exists())
+        self.assertTrue(self.disabled_notifications(self.conference_chair).exists())
 
     def test_one_notification_per_session(self):
         other_session = self.create_session(self.conference, 'Sesión Redes', self.session_chair)
@@ -536,7 +552,8 @@ class DisableReviewerTests(UserTestCase):
 
         response = self.disable()
 
-        messages = sorted(n.message for n in self.disabled_notifications(self.session_chair))
+        messages = sorted(n.message for n in self.disabled_notifications(self.conference_chair))
+        self.assertFalse(self.disabled_notifications(self.session_chair).exists())
         self.assertEqual(len(messages), 2)
         self.assertIn('"Artículo IA"', messages[0])
         self.assertNotIn('"Artículo Redes"', messages[0])
