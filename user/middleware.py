@@ -3,6 +3,12 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
 from jwt import ExpiredSignatureError, InvalidTokenError
+from .models import User
+
+ACCOUNT_DISABLED_ERROR = {
+    'error': 'Su cuenta se encuentra deshabilitada',
+    'code': 'account_disabled',
+}
 
 class JWTAuthenticationMiddleware(MiddlewareMixin):
     def process_request(self, request):
@@ -40,5 +46,15 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
         except InvalidTokenError:
             return JsonResponse({'error': 'Token inválido'}, status=401)
 
+        user_id = payload.get('user_id')
+
+        # El token sigue siendo válido aunque el admin deshabilite la cuenta,
+        # por eso se consulta el estado del usuario en cada request.
+        user = User.objects.filter(pk=user_id).only('is_active').first()
+        if user is None:
+            return JsonResponse({'error': 'Token inválido'}, status=401)
+        if not user.is_active:
+            return JsonResponse(ACCOUNT_DISABLED_ERROR, status=401)
+
         # Se guarda user_id en el request
-        request.user_id = payload.get('user_id')
+        request.user_id = user_id

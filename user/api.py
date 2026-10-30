@@ -9,6 +9,7 @@ from .serializers import UserSerializer, LoginSerializer
 from article.models import Article
 from reviewer.models import Review, Bid
 from django.db.models import OuterRef, Subquery
+from django.db import transaction
 from chair.models import ReviewAssignment
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
@@ -18,6 +19,11 @@ from rest_framework.response import Response
 from .models import User
 from .serializers import UserSerializer
 from rest_framework.permissions import AllowAny
+from .permissions import IsAdminUser
+from .middleware import ACCOUNT_DISABLED_ERROR
+from .disable import ChairConflictError, disable_user, get_disable_check
+from .chair_requests import ChairRequestError, pending_request_data, request_conference_chair
+from conference_session.models import Session
 
 class UserRegisterAPI(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -59,6 +65,15 @@ class LoginAPI(APIView):
                 } 
             }, status=200)
 
+        # authenticate() también rechaza a los usuarios deshabilitados. Solo se avisa
+        # que la cuenta está deshabilitada si la contraseña es correcta, para no
+        # revelar qué cuentas existen.
+        email = request.data.get("email")
+        password = request.data.get("password")
+        disabled_user = User.objects.filter(email=email, is_active=False).first() if email and password else None
+        if disabled_user and disabled_user.check_password(password):
+            return JsonResponse(ACCOUNT_DISABLED_ERROR, status=403)
+
         return JsonResponse(
             {"error": "Email o contraseña incorrecto."},
             status=401
@@ -83,12 +98,11 @@ class GetUserIdAPI(APIView):
             'role': usuario.role,
         }, status=200)
     
-# Creado por el Grupo 1 para traer todos los usuarios de la base de datos
-# Se requiere para poder seleccionar los autores de un articulo
-# No esta protegido por JWT pero deberia estarlo de alguna forma, se deja asi para facilitar el merge
 class GetUserListAPI(APIView):
+    permission_classes = [IsAdminUser]
+
     def get(self, request):
-        usuarios = User.objects.all()
+        usuarios = User.objects.all().order_by('full_name', 'id')
         usuarios_data = [
             {
                 'id': usuario.id,
@@ -96,9 +110,98 @@ class GetUserListAPI(APIView):
                 'email': usuario.email,
                 'affiliation': usuario.affiliation,
                 'role': usuario.role,
+                'is_active': usuario.is_active,
             } for usuario in usuarios
         ]
         return JsonResponse(usuarios_data, safe=False, status=200)
+
+class DisableCheckAPI(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, user_id):
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+
+        return JsonResponse(get_disable_check(user), status=200)
+
+class UpdateUserStatusAPI(APIView):
+    permission_classes = [IsAdminUser]
+
+    def patch(self, request, user_id):
+        is_active = request.data.get('is_active')
+        if not isinstance(is_active, bool):
+            return JsonResponse({'error': 'El campo is_active es obligatorio y debe ser true o false.'}, status=400)
+
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+
+        if not is_active and user.id == request.user_id:
+            return JsonResponse({'error': 'No podés deshabilitar tu propia cuenta.'}, status=400)
+
+        summary = {}
+        with transaction.atomic():
+            if is_active:
+                # Al rehabilitar solo cambia el estado: no se restauran roles.
+                user.is_active = True
+                user.save(update_fields=['is_active'])
+            else:
+                try:
+                    summary = disable_user(user)
+                except ChairConflictError as error:
+                    return JsonResponse({
+                        'error': 'No se puede deshabilitar al usuario: es el único chair de las siguientes conferencias o sesiones.',
+                        'conflicts': error.conflicts,
+                    }, status=409)
+
+        return JsonResponse({
+            'message': 'Usuario habilitado correctamente.' if is_active else 'Usuario deshabilitado correctamente.',
+            'user': {
+                'id': user.id,
+                'full_name': user.full_name,
+                'email': user.email,
+                'affiliation': user.affiliation,
+                'role': user.role,
+                'is_active': user.is_active,
+            },
+            **summary,
+        }, status=200)
+
+class ChairReplacementRequestAPI(APIView):
+    permission_classes = [IsAdminUser]
+
+    def post(self, request, user_id):
+        session_id = request.data.get('session_id')
+        if not isinstance(session_id, int) or isinstance(session_id, bool):
+            return JsonResponse({'error': 'El campo session_id es obligatorio y debe ser un número.'}, status=400)
+
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist:
+            return JsonResponse({'error': 'Usuario no encontrado'}, status=404)
+
+        session = Session.objects.select_related('conference').filter(pk=session_id).first()
+        if session is None:
+            return JsonResponse({'error': 'Sesión no encontrada'}, status=404)
+
+        admin = User.objects.get(pk=request.user_id)
+        try:
+            with transaction.atomic():
+                chair_request, chairs, created = request_conference_chair(user, session, admin)
+        except ChairRequestError as error:
+            return JsonResponse({'error': str(error)}, status=400)
+
+        return JsonResponse({
+            **pending_request_data(chair_request),
+            'session_id': session.id,
+            'session_title': session.title,
+            'conference_id': session.conference_id,
+            'conference_title': session.conference.title,
+            'notified_chairs': [chair.full_name for chair in chairs],
+        }, status=201 if created else 200)
 
 class GetUserFullDataAPI(APIView):
     def get(self, request):
@@ -242,10 +345,10 @@ class GetUserFullDataAPI(APIView):
         return JsonResponse(data, safe=False, status=200)
 
 # Lo agregamos desde el grupo 3 para obtener usuarios que sean solo user, se ordena alfabeticamente
-# Por ahora se evita usar JWT, se agrega mas adelante
+# Grupo 3 (2026): es el endpoint de los selectores de usuarios; no incluye a los deshabilitados
 class GetUsersNoAdminAPI(APIView):
     def get(self, request):
-        users = User.objects.filter(role="user").order_by('full_name')
+        users = User.objects.filter(role="user", is_active=True).order_by('full_name')
         users_data = [
             {
                 'id': user.id,
@@ -335,7 +438,7 @@ class UpdateUserPasswordAPI(APIView):
 class GetSessionReviewersAPI(APIView):
 
     def get(self, request, session_id, *args, **kwargs):
-        reviewers = User.objects.filter(role="user", deleted=False)
+        reviewers = User.objects.filter(role="user", deleted=False, is_active=True)
         ## reviewers = reviewers.exclude(session__id=session_id) # excluye al chair de la sesion
         serializer = UserSerializer(reviewers, many=True)
         return Response(serializer.data, status=200)
