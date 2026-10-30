@@ -1,0 +1,67 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-comfy_chair}
+      POSTGRES_USER: ${POSTGRES_USER:-comfy_chair}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      DEBUG: ${DEBUG:-False}
+      ALLOWED_HOSTS: ${APP_HOST:?APP_HOST is required}
+      CORS_ALLOWED_ORIGINS: https://${APP_HOST}
+      CSRF_TRUSTED_ORIGINS: https://${APP_HOST}
+      DB_ENGINE: postgres
+      POSTGRES_DB: ${POSTGRES_DB:-comfy_chair}
+      POSTGRES_USER: ${POSTGRES_USER:-comfy_chair}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+    volumes:
+      - media:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+      - traefik
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-public
+      # HTTPS
+      - traefik.http.routers.comfy-chair-api.rule=Host(`${APP_HOST}`) && PathPrefix(`/api`)
+      - traefik.http.routers.comfy-chair-api.priority=100
+      - traefik.http.routers.comfy-chair-api.entrypoints=${TRAEFIK_ENTRYPOINT_HTTPS:-websecure}
+      - traefik.http.routers.comfy-chair-api.tls.certresolver=${TRAEFIK_CERTRESOLVER:-myresolver}
+      - traefik.http.routers.comfy-chair-api.service=comfy-chair-api
+      - traefik.http.services.comfy-chair-api.loadbalancer.server.port=8000
+      # HTTP -> HTTPS
+      - traefik.http.routers.comfy-chair-api-http.rule=Host(`${APP_HOST}`) && PathPrefix(`/api`)
+      - traefik.http.routers.comfy-chair-api-http.priority=100
+      - traefik.http.routers.comfy-chair-api-http.entrypoints=${TRAEFIK_ENTRYPOINT_HTTP:-web}
+      - traefik.http.routers.comfy-chair-api-http.middlewares=comfy-chair-api-https-redirect
+      - traefik.http.middlewares.comfy-chair-api-https-redirect.redirectscheme.scheme=https
+      - traefik.http.middlewares.comfy-chair-api-https-redirect.redirectscheme.permanent=true
+
+volumes:
+  pgdata:
+  media:
+
+networks:
+  internal:
+  traefik-public:
+    external: true
