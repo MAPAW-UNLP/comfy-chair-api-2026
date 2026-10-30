@@ -143,6 +143,7 @@ class GetUserFullDataAPI(APIView):
             conf_entry = conferences_data.setdefault(conf.id, {
                 'conference_id': conf.id,
                 'conference_name': conf.title,
+                'roles': [],
                 'sessions': {}
             })
             sess_entry = conf_entry['sessions'].setdefault(sess.id, {
@@ -166,6 +167,7 @@ class GetUserFullDataAPI(APIView):
             conf_entry = conferences_data.setdefault(conf.id, {
                 'conference_id': conf.id,
                 'conference_name': conf.title,
+                'roles': [],
                 'sessions': {}
             })
             sess_entry = conf_entry['sessions'].setdefault(sess.id, {
@@ -180,6 +182,33 @@ class GetUserFullDataAPI(APIView):
                 'score': assign.score,
                 'opinion': assign.opinion,
             })
+
+        # Procesar conferencias donde el usuario es chair 
+        for conference in conference_chairs:
+            conf_entry = conferences_data.setdefault(conference['id'], {
+                'conference_id': conference['id'],
+                'conference_name': conference['title'],
+                'roles': [],
+                'sessions': {}
+            })
+            conf_entry['roles'].append('chair')
+
+        # Procesar sesiones donde el usuario es chair
+        for session in session_chairs:
+            conf_entry = conferences_data.setdefault(session['conference__id'], {
+                'conference_id': session['conference__id'],
+                'conference_name': session['conference__title'],
+                'roles': [],
+                'sessions': {}
+            })
+            conf_entry['roles'].append('chair')
+
+            sess_entry = conf_entry['sessions'].setdefault(session['id'], {
+                'session_id': session['id'],
+                'session_name': session['title'],
+                'roles': {}
+            })
+            sess_entry['roles'].setdefault('chair', [])
 
         # Convertir dicts a listas
         conferences_list = []
