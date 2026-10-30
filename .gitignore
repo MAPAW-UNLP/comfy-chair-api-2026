@@ -29,3 +29,7 @@ db.sqlite3
 
 #Seed
 seed_demo.py
+!.env.example
+
+# Static recolectados
+staticfiles/

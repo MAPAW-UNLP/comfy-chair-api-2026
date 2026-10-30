@@ -16,7 +16,9 @@ class JWTAuthenticationMiddleware(MiddlewareMixin):
             '/api/user/register-admin/',
             '/api/user/register-admin',
         ]
-        if request.path in public_paths:
+        # Admin (usa sesión), estáticos y archivos subidos no requieren token
+        public_prefixes = ('/api/admin/', '/api/static/', '/api/media/')
+        if request.path in public_paths or request.path.startswith(public_prefixes):
             return None
      
         auth_header = request.headers.get('Authorization')

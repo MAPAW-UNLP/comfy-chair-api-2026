@@ -12,6 +12,16 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import datetime
+import os
+
+from django.core.exceptions import ImproperlyConfigured
+
+
+def env_list(name, default):
+    value = os.environ.get(name)
+    if not value:
+        return default
+    return [item.strip() for item in value.split(',') if item.strip()]
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,13 +31,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-pp8bwt0_d7o$v)3rrxqf0xs#7%8^@z3u_ad(a132&=1l%t(kci'
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY',
+    'django-insecure-pp8bwt0_d7o$v)3rrxqf0xs#7%8^@z3u_ad(a132&=1l%t(kci',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'True').lower() in ('1', 'true', 'yes')
 
 # ⬅️ Necesario para evitar DisallowedHost al usar test Client y acceder por localhost
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'testserver']
+ALLOWED_HOSTS = env_list('ALLOWED_HOSTS', ['localhost', '127.0.0.1', 'testserver'])
 
 
 # Application definition
@@ -52,6 +65,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -60,10 +74,6 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'user.middleware.JWTAuthenticationMiddleware'
 ]
-
-# Incluir JWTAuthenticationMiddleware solo fuera de DEBUG (producción)
-if not DEBUG:
-    MIDDLEWARE.append('user.middleware.JWTAuthenticationMiddleware')
 
 ROOT_URLCONF = 'comfy_chair.urls'
 
@@ -88,12 +98,28 @@ WSGI_APPLICATION = 'comfy_chair.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+DB_ENGINE = os.environ.get('DB_ENGINE', 'sqlite').lower()
+
+if DB_ENGINE == 'sqlite':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
     }
-}
+elif DB_ENGINE == 'postgres':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('POSTGRES_DB', 'comfy_chair'),
+            'USER': os.environ.get('POSTGRES_USER', 'comfy_chair'),
+            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
+            'HOST': os.environ.get('POSTGRES_HOST', 'db'),
+            'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+        }
+    }
+else:
+    raise ImproperlyConfigured(f"DB_ENGINE inválido: '{DB_ENGINE}' (usar 'sqlite' o 'postgres')")
 
 
 # Password validation
@@ -130,10 +156,11 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = '/static/'  # ⬅️ con slash inicial
+STATIC_URL = '/api/static/'  # ⬅️ bajo /api para que el proxy lo enrute al backend
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Media files (uploads)
-MEDIA_URL = '/media/'    # ⬅️ con slash inicial (necesario para servir archivos)
+MEDIA_URL = '/api/media/'    # ⬅️ bajo /api para que el proxy lo enrute al backend
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
@@ -141,9 +168,12 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-]
+CORS_ALLOWED_ORIGINS = env_list('CORS_ALLOWED_ORIGINS', ['http://localhost:5173'])
+CSRF_TRUSTED_ORIGINS = env_list('CSRF_TRUSTED_ORIGINS', [])
+
+# Detrás de Traefik: respetar el esquema/host originales para generar URLs absolutas
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
 
 AUTH_USER_MODEL = 'user.User'
 
