@@ -77,7 +77,7 @@ class AvailableReviewersAPI(APIView):
     def get(self, request, article_id):
         article = get_object_or_404(Article, pk=article_id)
 
-        bids = Bid.objects.filter(article=article).select_related('reviewer')
+        bids = Bid.objects.filter(article=article, reviewer__is_active=True).select_related('reviewer')
 
         interested = []
         maybe = []
@@ -104,7 +104,7 @@ class AvailableReviewersAPI(APIView):
             elif bid.choice == 'not_interested':
                 not_interested.append(reviewer_data)
 
-        reviewers_without_bid = User.objects.filter(role = "user").exclude(id__in=reviewers_with_bid_ids)
+        reviewers_without_bid = User.objects.filter(role = "user", is_active=True).exclude(id__in=reviewers_with_bid_ids)
         none_interest = [
             {
                 'id': reviewer.id,

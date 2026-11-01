@@ -4,11 +4,13 @@ import jwt
 from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 from article.models import Article
 from chair.models import ReviewAssignment
 from conference.models import Conference
+from conference.views import ConferenceViewSet
 from conference_session.models import Session
+from notification.models import Notification
 from user.models import User
 
 
@@ -249,3 +251,33 @@ class ConferenceUsersActionTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_removing_reviewer_role_attaches_session_to_notification(self):
+        actor = User.objects.create(
+            email='admin@example.com',
+            full_name='Conference Admin',
+            affiliation='MAPAW',
+            role='admin',
+        )
+        reviewer = self.create_user('reviewer@example.com')
+        author = self.create_user('author@example.com')
+        session = self.create_session(self.conference, 'Session A', actor)
+        article = self.create_article(session, 'Article A', author)
+        ReviewAssignment.objects.create(reviewer=reviewer, article=article)
+        request = APIRequestFactory().patch(
+            '/',
+            {'role': 'reviewer', 'action': 'remove'},
+            format='json',
+        )
+        request.user_id = actor.pk
+
+        response = ConferenceViewSet.as_view(
+            {'patch': 'update_user_role'}
+        )(request, pk=self.conference.pk, user_id=reviewer.pk)
+
+        self.assertEqual(response.status_code, 200)
+        notification = Notification.objects.get(
+            user=actor,
+            title='Reasignar revisiones pendientes',
+        )
+        self.assertEqual(notification.session, session)
