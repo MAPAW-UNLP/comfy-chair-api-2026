@@ -126,6 +126,14 @@ class PublicReviewSerializer(serializers.ModelSerializer):
         fields = ['id', 'article', 'reviewer', 'score', 'opinion', 'created_at', 'updated_at']
 
 
+class ChairReviewSerializer(serializers.ModelSerializer):
+    reviewer_name = serializers.CharField(source='reviewer.full_name', read_only=True)
+
+    class Meta:
+        model = Review
+        fields = ['id', 'article', 'reviewer', 'reviewer_name', 'score', 'opinion', 'chair_comments', 'created_at', 'updated_at']
+
+
 class AssignmentArticleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Article
@@ -189,7 +197,7 @@ class ReviewerAssignmentSerializer(serializers.ModelSerializer):
         return 'published' if review.is_published else 'draft'
 
     def get_review_period(self, obj):
-        return review_window(obj.article.session)
+        return review_window(obj.article.session).as_dict()
 
 
 class InvitationConferenceSerializer(serializers.ModelSerializer):
