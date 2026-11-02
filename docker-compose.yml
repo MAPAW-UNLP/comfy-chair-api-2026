@@ -38,7 +38,7 @@ services:
         condition: service_healthy
     networks:
       - internal
-      - traefik
+      - traefik-public
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-public
