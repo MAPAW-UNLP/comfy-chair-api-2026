@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.exceptions import ValidationError
 from django.db.models import Q
+from django.db.models.functions import Lower
 from .models import Conference
 from .serializers import ConferenceSerializer
 from django.utils import timezone
@@ -135,6 +136,8 @@ class ConferenceViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(
                 Q(title__icontains=search) | Q(description__icontains=search)
             )
+        if self.action in ('list', 'finished', 'active'):
+            queryset = queryset.order_by(Lower('title'), 'id')
         return queryset
 
     # /api/conference/finished/  -->  devuelve las conferencias con end_date < fecha_actual
@@ -143,7 +146,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
         fecha_actual = timezone.now().date()
         conferencias = self.get_queryset().filter(
             end_date__lt=fecha_actual
-        ).order_by('-id')  
+        )
         serializer = self.get_serializer(conferencias, many=True)
         return Response(serializer.data)
     
@@ -153,6 +156,6 @@ class ConferenceViewSet(viewsets.ModelViewSet):
         fecha_actual = timezone.now().date()
         conferencias = self.get_queryset().filter(
             end_date__gte=fecha_actual
-        ).order_by('-id') 
+        )
         serializer = self.get_serializer(conferencias, many=True)
         return Response(serializer.data)
