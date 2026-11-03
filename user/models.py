@@ -22,3 +22,14 @@ class User(AbstractUser):
 
     class Meta:
         verbose_name_plural = "user"
+
+
+# Grupo 3 (2026)
+class ChairReplacementRequest(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chair_replacement_requests')
+    session = models.ForeignKey(
+        'conference_session.Session', on_delete=models.CASCADE, related_name='chair_replacement_requests'
+    )
+    requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='+')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from .models import Session
 from conference.models import Conference
-from conference.serializers import ConferenceSerializer
+from conference.serializers import ConferenceSerializer, chairs_summary
 from user.models import User
 from datetime import date
 
@@ -95,3 +95,11 @@ class SessionSerializer(serializers.ModelSerializer):
                 setattr(instance, field, None)
 
         return super().update(instance, validated_data)
+
+
+# Grupo 3 (2026)
+class SessionDetailSerializer(SessionSerializer):
+    chairs_detail = serializers.SerializerMethodField()
+
+    def get_chairs_detail(self, obj):
+        return chairs_summary(obj)

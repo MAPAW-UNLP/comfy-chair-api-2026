@@ -1,26 +1,62 @@
-from urllib import request
 import zipfile
 import io
-from rest_framework import status
+from datetime import date
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404, HttpResponse
 from article.models import Article, ArticleDeletionRequest, ArticleHistory, Source
+from user.models import User
 from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer
+from .permissions import IsArticleAuthor
+from .validators import ArticleCompletenessValidator
+
+# Acciones de detalle que solo puede ver/tocar un autor del artículo cuando
+# este está en borrador (ver IsArticleAuthor y get_queryset).
+_AUTHOR_ONLY_ACTIONS = ('retrieve', 'update', 'partial_update', 'submit')
 
 
-from article.models import Article
-from article.serializers import ArticleSerializer
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
+def _resolve_user(request):
+    user = getattr(request, 'auth_user', None)
+    if user is not None:
+        return user
+    user_id = getattr(request, 'user_id', None)
+    return User.objects.filter(pk=user_id).first() if user_id else None
+
+
+def _visible_articles(queryset, request):
+    # Un borrador ajeno no se muestra; el propio borrador del usuario
+    # autenticado sí, mezclado con el resto, igual que un artículo en
+    # cualquier otro estado.
+    user = _resolve_user(request)
+    if user is None:
+        return queryset.exclude(status='draft')
+    return queryset.filter(
+        Q(authors=user) | Q(corresponding_author=user) | ~Q(status='draft')
+    ).distinct()
 
 # --- Endpoints para el modelo Article ---
 class ArticleViewSet(viewsets.ModelViewSet):
     queryset = Article.objects.all()
     serializer_class = ArticleSerializer
+
+    def get_permissions(self):
+        if self.action in _AUTHOR_ONLY_ACTIONS:
+            return [IsArticleAuthor()]
+        return super().get_permissions()
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+
+        if self.action == 'list' or self.action in _AUTHOR_ONLY_ACTIONS:
+            # Listado general y acciones de detalle: un borrador ajeno no se
+            # ve (404/no aparece); el borrador propio del usuario autenticado
+            # sí, mezclado con el resto, igual que cualquier otro artículo.
+            return _visible_articles(queryset, self.request)
+
+        return queryset
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
@@ -57,12 +93,12 @@ class ArticleViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             self.perform_create(serializer)
             created_article = serializer.instance
-            
+
             author = created_article.corresponding_author
             ArticleHistory.objects.create(
                 article=created_article,
-                event_type='submitted',
-                created_by_id=author.id,
+                event_type='draft_created' if created_article.status == 'draft' else 'submitted',
+                created_by_id=author.id if author else getattr(request, 'user_id', None),
             )
 
             source_files = request.FILES.getlist('sources')
@@ -88,9 +124,64 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        self.perform_update(serializer)
-        return Response(serializer.data)
-    
+        with transaction.atomic():
+            self.perform_update(serializer)
+
+            # Mismo manejo que create(): agrega los archivos fuente nuevos
+            # que vengan en el request, sin tocar los que ya existían.
+            source_files = request.FILES.getlist('sources')
+            for file in source_files:
+                Source.objects.create(
+                    article=instance,
+                    file_path=file,
+                    filename=file.name
+                )
+
+        return Response(self.get_serializer(instance).data)
+
+    #------------------------------------------------------------
+    # Endpoint para enviar un borrador: draft -> reception
+    #------------------------------------------------------------
+    @action(detail=True, methods=['post'])
+    def submit(self, request, pk=None):
+        article = self.get_object()
+
+        if article.status != 'draft':
+            return Response(
+                {'detail': 'El artículo no está en borrador.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if date.today() > article.session.deadline:
+            return Response(
+                {'detail': 'El deadline de la sesión ya venció.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        errors = ArticleCompletenessValidator(
+            title=article.title,
+            abstract=article.abstract,
+            main_file=article.main_file,
+            article_type=article.type,
+            authors_count=article.authors.count(),
+            corresponding_author=article.corresponding_author,
+            has_sources=article.source_set.exists(),
+        ).errors()
+        if errors:
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+        article._notify_submitted = True
+        article.status = 'reception'
+        article.save()
+
+        ArticleHistory.objects.create(
+            article=article,
+            event_type='submitted',
+            created_by=getattr(request, 'auth_user', None),
+        )
+
+        return Response(self.get_serializer(article).data, status=status.HTTP_200_OK)
+
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para descargar el archivo principal
     #------------------------------------------------------------
@@ -139,14 +230,14 @@ class ArticleViewSet(viewsets.ModelViewSet):
     # endpoint hecho por grupo 3 para obtener articulos en base al id de una sesion dada
     @action(detail=False, methods=['get'], url_path='getArticlesBySessionId/(?P<session_id>[^/.]+)')
     def getArticlesBySessionId(self, request, session_id=None):
-        articles = Article.objects.filter(session_id=session_id)
+        articles = _visible_articles(Article.objects.filter(session_id=session_id), request)
         serializer = ArticleSerializer(articles, many=True)
         return Response(serializer.data)
-    
+
     # endpoint hecho por el grupo 3 para obtener articulos en base al id de una conferencia
     @action(detail=False, methods=['get'], url_path='getArticlesByConferenceId/(?P<conference_id>[^/.]+)')
     def getArticlesByConferenceId(self, request, conference_id=None):
-        articles = Article.objects.filter(session__conference=conference_id)
+        articles = _visible_articles(Article.objects.filter(session__conference=conference_id), request)
         serializer = ArticleSerializer(articles, many=True)
         return Response(serializer.data)
 

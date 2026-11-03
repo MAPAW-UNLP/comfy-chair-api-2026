@@ -4,15 +4,15 @@ from rest_framework.response import Response
 
 from conference_session.models import Session
 from conference_session.permissions import IsAdminOrConferenceChair
-from conference_session.serializers import SessionSerializer
+from conference_session.serializers import SessionDetailSerializer
 
 from article.models import Article
 from article.serializers import ArticleSerializer
 
 
 class SessionViewSet(viewsets.ModelViewSet):
-    queryset = Session.objects.all()
-    serializer_class = SessionSerializer
+    queryset = Session.objects.select_related('conference').prefetch_related('chairs', 'conference__chairs')
+    serializer_class = SessionDetailSerializer
     permission_classes = [IsAdminOrConferenceChair]
 
     def get_queryset(self):
