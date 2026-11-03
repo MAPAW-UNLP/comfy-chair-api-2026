@@ -86,6 +86,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
         allowed_fields = {
             'submission_start', 'submission_end',
             'review_start', 'review_end',
+            'bidding_start', 'bidding_end',
         }
         data = {
             field: request.data.get(field)
