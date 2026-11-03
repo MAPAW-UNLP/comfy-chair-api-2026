@@ -11,7 +11,26 @@ from conference_session.models import Session
 # Notifica cuando se crea o modifica un articulo
 @receiver(post_save, sender=Article)
 def article_created_or_updated_notification(sender, instance, created, **kwargs):
-    if created:
+    # Crear o editar un borrador no notifica nada: todavía no fue enviado.
+    if instance.status == 'draft':
+        return
+
+    # Sin autor de contacto no hay a quién notificar (no debería pasar para
+    # un artículo que no es draft, pero evita un IntegrityError si pasa).
+    if instance.corresponding_author_id is None:
+        return
+
+    # El endpoint submit marca esta bandera para avisar "enviado" aunque el
+    # save() que hace el cambio draft -> reception sea un update, no un create.
+    if getattr(instance, '_notify_submitted', False):
+        Notification.objects.create(
+            user=instance.corresponding_author,
+            article=instance,
+            title="Artículo enviado",
+            message=f"Has enviado el artículo '{instance.title}' correctamente.",
+            type="info"
+        )
+    elif created:
         Notification.objects.create(
             user=instance.corresponding_author,
             article=instance,

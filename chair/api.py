@@ -163,7 +163,7 @@ class CutoffSelectionAPI(APIView):
             )
 
         # Busca articulos en la sesion
-        if not Article.objects.filter(session=session).exists():
+        if not Article.objects.filter(session=session).exclude(status='draft').exists():
             return JsonResponse(
                 {'message': 'La sesión no tiene artículos asociados.'},
                 status=400
