@@ -2,6 +2,8 @@ import itertools
 import shutil
 import tempfile
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import jwt
 from django.conf import settings
@@ -11,7 +13,7 @@ from rest_framework.test import APIClient
 
 from article.models import Article, ArticleHistory, Source
 from conference.models import Conference
-from conference_session.models import Session
+from conference_session.models import Session, get_submission_period
 from notification.models import Notification
 from user.models import User
 
@@ -59,6 +61,10 @@ class ArticleDraftTestCase(TestCase):
             "end_date": hoy + timedelta(days=90),
         }
         datos.update(extra)
+        # Los tests existentes de escritura usan una conferencia con período
+        # de submissions configurado explícitamente.
+        datos.setdefault("submission_start", datos["start_date"])
+        datos.setdefault("submission_end", datos["end_date"])
         return Conference.objects.create(**datos)
 
     def crear_sesion(self, conferencia=None, **extra):
@@ -249,7 +255,7 @@ class SubmitTests(ArticleDraftTestCase):
         respuesta = self.cliente_de(autor).post(f"/api/article/{borrador.id}/submit/")
         self.assertEqual(respuesta.status_code, 200, respuesta.data)
 
-    def test_submit_con_deadline_vencido_falla(self):
+    def test_submit_con_periodo_de_conferencia_vencido_falla(self):
         autor = self.crear_usuario()
         conferencia = self.crear_conferencia(
             start_date=date.today() - timedelta(days=30),
@@ -260,7 +266,8 @@ class SubmitTests(ArticleDraftTestCase):
         self.completar_borrador(borrador, autor, tipo="regular")
 
         respuesta = self.cliente_de(autor).post(f"/api/article/{borrador.id}/submit/")
-        self.assertEqual(respuesta.status_code, 400)
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertEqual(respuesta.data["code"], "submission_period_closed")
 
     def test_submit_sobre_articulo_que_no_esta_en_draft_devuelve_409(self):
         autor = self.crear_usuario()
@@ -391,3 +398,458 @@ class UserFullDataConBorradoresTests(ArticleDraftTestCase):
 
         respuesta = self.cliente_de(autor).get("/user/user-full-data/")
         self.assertEqual(respuesta.status_code, 200, respuesta.content)
+
+
+UTC = timezone.utc
+OPEN_NOW = datetime(2026, 11, 16, 12, tzinfo=UTC)
+
+
+class SubmissionPeriodTests(ArticleDraftTestCase):
+    def setUp(self):
+        super().setUp()
+        self.clock_patch = patch(
+            'conference_session.models.timezone.now',
+            return_value=OPEN_NOW,
+        )
+        self.clock = self.clock_patch.start()
+        self.addCleanup(self.clock_patch.stop)
+        self.author = self.crear_usuario()
+        self.conference = self.crear_conferencia(
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 12, 31),
+            submission_start=date(2026, 11, 10),
+            submission_end=date(2026, 11, 30),
+        )
+        self.session = self.crear_sesion(
+            self.conference, deadline=date(2026, 11, 30)
+        )
+        self.client = self.cliente_de(self.author)
+
+    def _draft_payload(self, session=None):
+        return {
+            'status': 'draft',
+            'title': 'Mi borrador',
+            'session_id': (session or self.session).pk,
+            'authors_ids': [self.author.pk],
+        }
+
+    def _complete_payload(self, session=None):
+        return {
+            'status': 'reception',
+            'title': 'Artículo completo',
+            'session_id': (session or self.session).pk,
+            'abstract': 'Resumen completo',
+            'type': 'regular',
+            'authors_ids': [self.author.pk],
+            'corresponding_author_id': self.author.pk,
+            'main_file': SimpleUploadedFile(
+                'article.pdf', b'%PDF-1.4 test', content_type='application/pdf'
+            ),
+        }
+
+    def _closed(self, response):
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertEqual(response.data, {
+            'code': 'submission_period_closed',
+            'detail': 'El período de submissions de esta sesión está cerrado.',
+        })
+
+    def test_boundaries_are_half_open_and_include_full_submission_end_day(self):
+        period = get_submission_period(self.session)
+        self.assertEqual(period.start, datetime(2026, 11, 10, tzinfo=UTC))
+        self.assertEqual(period.end_exclusive, datetime(2026, 12, 1, tzinfo=UTC))
+        for now, expected in (
+            (datetime(2026, 11, 9, 23, 59, 59, tzinfo=UTC), False),
+            (datetime(2026, 11, 10, 0, 0, tzinfo=UTC), True),
+            (OPEN_NOW, True),
+            (datetime(2026, 11, 30, 23, 59, 59, tzinfo=UTC), True),
+            (datetime(2026, 12, 1, 0, 0, tzinfo=UTC), False),
+            (datetime(2026, 12, 2, 0, 0, tzinfo=UTC), False),
+        ):
+            with self.subTest(now=now):
+                self.assertEqual(period.is_open(now), expected)
+
+    def test_missing_boundaries_close_period_without_fallback(self):
+        original_start = self.conference.submission_start
+        original_end = self.conference.submission_end
+        for start, end in (
+            (None, original_end),
+            (original_start, None),
+            (None, None),
+        ):
+            with self.subTest(start=start, end=end):
+                self.conference.submission_start = start
+                self.conference.submission_end = end
+                self.conference.save()
+                period = get_submission_period(self.session)
+                self.assertEqual(period.start is None, start is None)
+                self.assertEqual(period.end_exclusive is None, end is None)
+                self.assertFalse(period.is_open())
+                response = self.client.get(
+                    f'/api/article/submission-status/?session_id={self.session.pk}'
+                )
+                self.assertEqual(response.status_code, 200, response.data)
+                self.assertEqual(response.data['submission_start'],
+                                 '2026-11-10T00:00:00Z' if start else None)
+                self.assertEqual(response.data['submission_deadline'],
+                                 '2026-12-01T00:00:00Z' if end else None)
+                self.assertFalse(response.data['submission_open'])
+                self._closed(self.client.post(
+                    '/api/article/', self._draft_payload(), format='multipart'
+                ))
+
+    def test_start_after_end_is_closed_without_server_error(self):
+        self.conference.submission_start = date(2026, 12, 2)
+        self.conference.save()
+        period = get_submission_period(self.session)
+        self.assertFalse(period.is_open())
+        response = self.client.get(
+            f'/api/article/submission-status/?session_id={self.session.pk}'
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['submission_open'])
+        self._closed(self.client.post(
+            '/api/article/', self._draft_payload(), format='multipart'
+        ))
+
+    def test_future_datetime_fields_keep_time_and_timezone(self):
+        eastern = timezone(timedelta(hours=-3))
+        session = SimpleNamespace(
+            conference=SimpleNamespace(
+                submission_start=datetime(2026, 11, 10, 9, 15, tzinfo=eastern),
+                submission_end=datetime(2026, 11, 30, 18, 30, tzinfo=eastern),
+            ),
+        )
+        period = get_submission_period(session)
+        self.assertEqual(period.start, datetime(2026, 11, 10, 12, 15, tzinfo=UTC))
+        self.assertEqual(
+            period.end_exclusive, datetime(2026, 11, 30, 21, 30, tzinfo=UTC)
+        )
+
+    def test_create_draft_and_complete_article_when_open(self):
+        draft = self.client.post('/api/article/', self._draft_payload(), format='multipart')
+        self.assertEqual(draft.status_code, 201, draft.data)
+        self.assertEqual(draft.data['status'], 'draft')
+
+        complete = self.client.post(
+            '/api/article/', self._complete_payload(), format='multipart'
+        )
+        self.assertEqual(complete.status_code, 201, complete.data)
+        self.assertEqual(complete.data['status'], 'reception')
+
+    def test_create_draft_and_complete_article_rejected_before_start(self):
+        self.clock.return_value = datetime(2026, 11, 9, 23, tzinfo=UTC)
+        self._assert_create_rejected_without_side_effects()
+
+    def test_create_draft_and_complete_article_rejected_after_submission_end(self):
+        self.clock.return_value = datetime(2026, 12, 1, tzinfo=UTC)
+        self._assert_create_rejected_without_side_effects()
+
+    def _assert_create_rejected_without_side_effects(self):
+        for payload in (self._draft_payload(), self._complete_payload()):
+            with self.subTest(status=payload['status']):
+                response = self.client.post('/api/article/', payload, format='multipart')
+                self._closed(response)
+        self.assertEqual(Article.objects.count(), 0)
+        self.assertEqual(Source.objects.count(), 0)
+        self.assertEqual(ArticleHistory.objects.count(), 0)
+        self.assertEqual(Notification.objects.count(), 0)
+
+    def test_put_and_patch_allowed_while_open(self):
+        article = self.crear_borrador(autor=self.author, sesion=self.session)
+        response = self.client.put(
+            f'/api/article/{article.pk}/',
+            {
+                'title': 'Título PUT',
+                'session_id': self.session.pk,
+                'authors_ids': [self.author.pk],
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        article.refresh_from_db()
+        self.assertTrue(article.authors.filter(pk=self.author.pk).exists())
+        response = self.client.patch(
+            f'/api/article/{article.pk}/', {'title': 'Título PATCH'},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        article.refresh_from_db()
+        self.assertEqual(article.title, 'Título PATCH')
+
+    def test_put_and_patch_rejected_before_start_and_after_submission_end(self):
+        for now in (
+            datetime(2026, 11, 9, tzinfo=UTC),
+            datetime(2026, 12, 1, tzinfo=UTC),
+        ):
+            self.clock.return_value = now
+            for method in ('put', 'patch'):
+                with self.subTest(now=now, method=method):
+                    article = self.crear_borrador(
+                        autor=self.author, sesion=self.session
+                    )
+                    before_history = ArticleHistory.objects.count()
+                    before_notifications = Notification.objects.count()
+                    payload = {
+                        'title': 'No guardar',
+                        'sources': SimpleUploadedFile('source.zip', b'contenido'),
+                    }
+                    if method == 'put':
+                        payload['session_id'] = self.session.pk
+                    response = getattr(self.client, method)(
+                        f'/api/article/{article.pk}/', payload, format='multipart'
+                    )
+                    self._closed(response)
+                    article.refresh_from_db()
+                    self.assertNotEqual(article.title, 'No guardar')
+                    self.assertEqual(Source.objects.filter(article=article).count(), 0)
+                    self.assertEqual(ArticleHistory.objects.count(), before_history)
+                    self.assertEqual(Notification.objects.count(), before_notifications)
+
+    def test_session_change_allowed_only_when_both_periods_open(self):
+        article = self.crear_borrador(autor=self.author, sesion=self.session)
+        other_conference = self.crear_conferencia(
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 12, 31),
+            submission_start=date(2026, 11, 10),
+            submission_end=date(2026, 11, 30),
+        )
+        destination = self.crear_sesion(
+            other_conference, deadline=date(2026, 11, 30)
+        )
+        response = self.client.patch(
+            f'/api/article/{article.pk}/',
+            {'session_id': destination.pk}, format='multipart',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        article.refresh_from_db()
+        self.assertEqual(article.session_id, destination.pk)
+
+    def test_session_change_rejected_when_origin_is_closed(self):
+        article = self.crear_borrador(autor=self.author, sesion=self.session)
+        self.conference.submission_end = date(2026, 11, 15)
+        self.conference.save()
+        other_conference = self.crear_conferencia(
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 12, 31),
+            submission_start=date(2026, 11, 10),
+            submission_end=date(2026, 11, 30),
+        )
+        destination = self.crear_sesion(
+            other_conference, deadline=date(2026, 11, 30)
+        )
+        response = self.client.patch(
+            f'/api/article/{article.pk}/',
+            {'session_id': destination.pk}, format='multipart',
+        )
+        self._closed(response)
+        article.refresh_from_db()
+        self.assertEqual(article.session_id, self.session.pk)
+
+    def test_session_change_rejected_when_destination_is_closed(self):
+        article = self.crear_borrador(autor=self.author, sesion=self.session)
+        other_conference = self.crear_conferencia(
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 12, 31),
+            submission_start=date(2026, 11, 10),
+            submission_end=date(2026, 11, 15),
+        )
+        destination = self.crear_sesion(
+            other_conference, deadline=date(2026, 11, 30)
+        )
+        response = self.client.put(
+            f'/api/article/{article.pk}/',
+            {'title': 'Nuevo', 'session_id': destination.pk},
+            format='multipart',
+        )
+        self._closed(response)
+        article.refresh_from_db()
+        self.assertEqual(article.session_id, self.session.pk)
+        self.assertNotEqual(article.title, 'Nuevo')
+
+    def test_sessions_in_same_conference_share_period_and_cannot_bypass_close(self):
+        other_session = self.crear_sesion(
+            self.conference, deadline=date(2026, 11, 15)
+        )
+        first = self.client.get(
+            f'/api/article/submission-status/?session_id={self.session.pk}'
+        )
+        second = self.client.get(
+            f'/api/article/submission-status/?session_id={other_session.pk}'
+        )
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertTrue(first.data['submission_open'])
+        for key in ('submission_start', 'submission_deadline', 'submission_open'):
+            self.assertEqual(first.data[key], second.data[key])
+
+        article = self.crear_borrador(autor=self.author, sesion=self.session)
+        self.clock.return_value = datetime(2026, 12, 1, tzinfo=UTC)
+        response = self.client.patch(
+            f'/api/article/{article.pk}/',
+            {'session_id': other_session.pk}, format='multipart',
+        )
+        self._closed(response)
+        article.refresh_from_db()
+        self.assertEqual(article.session_id, self.session.pk)
+
+    def test_expired_session_deadline_does_not_close_conference_period(self):
+        self.session.deadline = date(2026, 11, 15)
+        self.session.save()
+        self.assertTrue(get_submission_period(self.session).is_open())
+
+        draft = self.client.post(
+            '/api/article/', self._draft_payload(), format='multipart'
+        )
+        self.assertEqual(draft.status_code, 201, draft.data)
+        direct = self.client.post(
+            '/api/article/', self._complete_payload(), format='multipart'
+        )
+        self.assertEqual(direct.status_code, 201, direct.data)
+
+        article = Article.objects.get(pk=draft.data['id'])
+        updated = self.client.put(
+            f'/api/article/{article.pk}/',
+            {
+                'title': 'Título PUT',
+                'session_id': self.session.pk,
+                'authors_ids': [self.author.pk],
+            },
+            format='multipart',
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        updated = self.client.patch(
+            f'/api/article/{article.pk}/',
+            {'title': 'Título PATCH'}, format='multipart',
+        )
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.completar_borrador(article, self.author)
+        submitted = self.client.post(f'/api/article/{article.pk}/submit/')
+        self.assertEqual(submitted.status_code, 200, submitted.data)
+        self.assertEqual(submitted.data['status'], 'reception')
+
+    def test_future_session_deadline_does_not_extend_closed_conference_period(self):
+        self.conference.submission_end = date(2026, 11, 15)
+        self.conference.save()
+        self.assertEqual(self.session.deadline, date(2026, 11, 30))
+        article = self.crear_borrador(autor=self.author, sesion=self.session)
+        self.completar_borrador(article, self.author)
+        before_history = ArticleHistory.objects.count()
+        before_notifications = Notification.objects.count()
+        before_articles = Article.objects.count()
+
+        for payload in (self._draft_payload(), self._complete_payload()):
+            with self.subTest(status=payload['status']):
+                self._closed(self.client.post(
+                    '/api/article/', payload, format='multipart'
+                ))
+        for method, payload in (
+            ('put', {'title': 'No guardar', 'session_id': self.session.pk}),
+            ('patch', {'title': 'No guardar'}),
+        ):
+            with self.subTest(method=method):
+                self._closed(getattr(self.client, method)(
+                    f'/api/article/{article.pk}/', payload, format='multipart'
+                ))
+        self._closed(self.client.post(f'/api/article/{article.pk}/submit/'))
+        article.refresh_from_db()
+        self.assertEqual(article.status, 'draft')
+        self.assertNotEqual(article.title, 'No guardar')
+        self.assertEqual(Article.objects.count(), before_articles)
+        self.assertEqual(ArticleHistory.objects.count(), before_history)
+        self.assertEqual(Notification.objects.count(), before_notifications)
+
+    def test_submit_allowed_while_open_and_rejected_outside_period(self):
+        for now, allowed in (
+            (OPEN_NOW, True),
+            (datetime(2026, 11, 9, tzinfo=UTC), False),
+            (datetime(2026, 12, 1, tzinfo=UTC), False),
+        ):
+            with self.subTest(now=now):
+                article = self.crear_borrador(autor=self.author, sesion=self.session)
+                self.completar_borrador(article, self.author)
+                before_history = ArticleHistory.objects.count()
+                before_notifications = Notification.objects.count()
+                self.clock.return_value = now
+                response = self.client.post(f'/api/article/{article.pk}/submit/')
+                article.refresh_from_db()
+                if allowed:
+                    self.assertEqual(response.status_code, 200, response.data)
+                    self.assertEqual(article.status, 'reception')
+                else:
+                    self._closed(response)
+                    self.assertEqual(article.status, 'draft')
+                    self.assertEqual(ArticleHistory.objects.count(), before_history)
+                    self.assertEqual(Notification.objects.count(), before_notifications)
+
+    def test_submission_status_reports_open_and_closed_with_exclusive_end(self):
+        url = f'/api/article/submission-status/?session_id={self.session.pk}'
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data, {
+            'session_id': self.session.pk,
+            'submission_open': True,
+            'submission_start': '2026-11-10T00:00:00Z',
+            'submission_deadline': '2026-12-01T00:00:00Z',
+        })
+        self.clock.return_value = datetime(2026, 12, 1, tzinfo=UTC)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data['submission_open'])
+
+    def test_submission_status_validates_session_id_and_authentication(self):
+        for query in (
+            '', '?session_id=', '?session_id=abc', '?session_id=0',
+            '?session_id=999999999999999999999999999999',
+        ):
+            with self.subTest(query=query):
+                response = self.client.get('/api/article/submission-status/' + query)
+                self.assertEqual(response.status_code, 400, response.data)
+        response = self.client.get(
+            '/api/article/submission-status/?session_id=999999999'
+        )
+        self.assertEqual(response.status_code, 404)
+        anonymous = APIClient().get(
+            f'/api/article/submission-status/?session_id={self.session.pk}'
+        )
+        self.assertEqual(anonymous.status_code, 401)
+
+    def test_closed_draft_remains_readable_and_other_authors_stay_blocked(self):
+        article = self.crear_borrador(autor=self.author, sesion=self.session)
+        stranger = self.crear_usuario()
+        self.clock.return_value = datetime(2026, 12, 1, tzinfo=UTC)
+        self.assertEqual(
+            self.client.get(f'/api/article/{article.pk}/').status_code, 200
+        )
+        self.assertEqual(
+            self.cliente_de(stranger).patch(
+                f'/api/article/{article.pk}/', {'title': 'Ajeno'},
+                format='multipart',
+            ).status_code,
+            404,
+        )
+
+    def test_sessionless_legacy_article_returns_400_on_write(self):
+        article = Article.objects.create(title='Heredado', status='draft')
+        article.authors.add(self.author)
+        self.assertEqual(
+            self.client.get(f'/api/article/{article.pk}/').status_code, 200
+        )
+        update = self.client.patch(
+            f'/api/article/{article.pk}/', {'title': 'Nuevo'}, format='multipart'
+        )
+        self.assertEqual(update.status_code, 400, update.data)
+        submit = self.client.post(f'/api/article/{article.pk}/submit/')
+        self.assertEqual(submit.status_code, 400, submit.data)
+        article.refresh_from_db()
+        self.assertEqual(article.title, 'Heredado')
+        self.assertEqual(article.status, 'draft')
+
+    def test_invalid_session_id_still_returns_serializer_validation_error(self):
+        response = self.client.post(
+            '/api/article/',
+            {'title': 'Borrador', 'status': 'draft', 'session_id': 999999999},
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn('session_id', response.data['errors'])
