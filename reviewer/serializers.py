@@ -165,13 +165,17 @@ class ReviewerAssignmentSerializer(serializers.ModelSerializer):
     review_id = serializers.SerializerMethodField()
     review_status = serializers.SerializerMethodField()
     review_period = serializers.SerializerMethodField()
+    is_author = serializers.SerializerMethodField()
 
     class Meta:
         model = ReviewAssignment
         fields = [
             'article', 'session', 'conference',
-            'review_id', 'review_status', 'review_period',
+            'review_id', 'review_status', 'review_period', 'is_author',
         ]
+
+    def get_is_author(self, obj):
+        return obj.article_id in self.context['de_su_autoria']
 
     def _review(self, obj):
         return self.context['reviews'].get(obj.article_id)

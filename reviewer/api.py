@@ -428,7 +428,7 @@ def _entero_opcional(valor, nombre):
 def _calcular_estadisticas(items):
     """Cuenta estados y progreso por sesión sobre la lista ya serializada."""
     stats = {
-        "total": len(items),
+        "total": 0,
         "published": 0,
         "draft": 0,
         "pending": 0,
@@ -436,17 +436,20 @@ def _calcular_estadisticas(items):
     }
     por_sesion = {}
     for item in items:
-        stats[item["review_status"]] += 1
         sesion = item["session"]
-        if sesion is None:
-            # Un artículo sin sesión cuenta en el total pero no tiene fila propia.
-            continue
         fila = por_sesion.setdefault(sesion["id"], {
             "session_id": sesion["id"],
             "title": sesion["title"],
             "total": 0,
             "published": 0,
-        })
+        }) if sesion else None
+        if item["is_author"]:
+            continue
+        stats["total"] += 1
+        stats[item["review_status"]] += 1
+        if fila is None:
+            # Un artículo sin sesión cuenta en el total pero no tiene fila propia.
+            continue
         fila["total"] += 1
         if item["review_status"] == "published":
             fila["published"] += 1
@@ -491,9 +494,16 @@ class ReviewerAssignmentsView(APIView):
         ).order_by("id")
         for review in propias:
             reviews.setdefault(review.article_id, review)
- 
+
+        de_su_autoria = set(
+            Article.objects
+            .filter(id__in=[a.article_id for a in asignaciones])
+            .filter(Q(authors=uid) | Q(corresponding_author=uid))
+            .values_list("id", flat=True)
+        )
+
         items = ReviewerAssignmentSerializer(
-            asignaciones, many=True, context={"reviews": reviews}
+            asignaciones, many=True, context={"reviews": reviews, "de_su_autoria": de_su_autoria}
         ).data
  
         return Response(

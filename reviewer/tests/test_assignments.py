@@ -155,6 +155,51 @@ class ReviewerAssignmentsTests(ReviewerTestCase):
         self.assertEqual(respuesta["stats"]["total"], 1)
         self.assertEqual(respuesta["stats"]["by_session"], [])
 
+    def asignar_propio(self, sesion, **extra):
+        articulo = self.crear_articulo(sesion=sesion, **extra)
+        self.crear_asignacion(self.revisor, articulo)
+        return articulo
+
+    def test_marca_is_author_en_coautor_y_autor_de_notificacion(self):
+        sesion = self.crear_sesion()
+        ajeno = self.asignar(sesion)
+        coautor = self.asignar_propio(sesion)
+        coautor.authors.add(self.revisor)
+        de_notificacion = self.asignar_propio(sesion, corresponding_author=self.revisor)
+
+        por_articulo = {r["article"]["id"]: r["is_author"] for r in self.pedir().json()["results"]}
+
+        self.assertEqual(por_articulo, {ajeno.id: False, coautor.id: True, de_notificacion.id: True})
+
+    def test_las_asignaciones_propias_no_cuentan_en_stats(self):
+        sesion = self.crear_sesion()
+        publicada = self.asignar(sesion)
+        self.asignar(sesion)
+        self.crear_review(self.revisor, publicada, publicada=True)
+        self.asignar_propio(sesion, corresponding_author=self.revisor)
+
+        stats = self.pedir().json()["stats"]
+
+        self.assertEqual(
+            (stats["total"], stats["published"], stats["draft"], stats["pending"]),
+            (2, 1, 0, 1),
+        )
+        self.assertEqual(stats["by_session"], [
+            {"session_id": sesion.id, "title": sesion.title, "total": 2, "published": 1},
+        ])
+
+    def test_sesion_con_solo_asignaciones_propias_queda_en_by_session_con_total_0(self):
+        sesion = self.crear_sesion()
+        propio = self.asignar_propio(sesion, corresponding_author=self.revisor)
+
+        respuesta = self.pedir().json()
+
+        self.assertEqual([r["article"]["id"] for r in respuesta["results"]], [propio.id])
+        self.assertEqual(respuesta["stats"]["total"], 0)
+        self.assertEqual(respuesta["stats"]["by_session"], [
+            {"session_id": sesion.id, "title": sesion.title, "total": 0, "published": 0},
+        ])
+
     # ---------- validación de parámetros ----------
 
     def test_conference_id_no_numerico_responde_400(self):
