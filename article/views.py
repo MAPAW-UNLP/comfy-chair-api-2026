@@ -4,6 +4,7 @@ from datetime import date
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import viewsets, status
+from rest_framework.exceptions import NotFound
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404, HttpResponse
@@ -15,7 +16,7 @@ from .validators import ArticleCompletenessValidator
 
 # Acciones de detalle que solo puede ver/tocar un autor del artículo cuando
 # este está en borrador (ver IsArticleAuthor y get_queryset).
-_AUTHOR_ONLY_ACTIONS = ('retrieve', 'update', 'partial_update', 'submit')
+_AUTHOR_ONLY_ACTIONS = ('retrieve', 'update', 'partial_update', 'submit', 'history')
 
 
 def _resolve_user(request):
@@ -60,7 +61,12 @@ class ArticleViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
-        article = self.get_object()
+        try:
+            article = self.get_object()
+        except Http404 as exc:
+            raise NotFound(
+                "No se encontró el artículo solicitado para consultar su historial."
+            ) from exc
         events = article.history_events.order_by('created_at', 'id')
         return Response(ArticleHistorySerializer(events, many=True).data)
 
