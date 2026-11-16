@@ -1,14 +1,19 @@
 import zipfile
 import io
-from datetime import date
 from django.db import transaction
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404, HttpResponse
 from article.models import Article, ArticleDeletionRequest, ArticleHistory, Source
 from user.models import User
+from conference_session.models import (
+    Session,
+    are_submission_periods_open,
+    get_submission_period,
+)
 from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer
 from .permissions import IsArticleAuthor
 from .validators import ArticleCompletenessValidator
@@ -16,6 +21,27 @@ from .validators import ArticleCompletenessValidator
 # Acciones de detalle que solo puede ver/tocar un autor del artículo cuando
 # este está en borrador (ver IsArticleAuthor y get_queryset).
 _AUTHOR_ONLY_ACTIONS = ('retrieve', 'update', 'partial_update', 'submit')
+
+
+def _iso_utc_or_none(value):
+    return value.isoformat().replace('+00:00', 'Z') if value is not None else None
+
+
+def _submission_period_error(*sessions):
+    if any(session is None for session in sessions):
+        return Response(
+            {'errors': {'session_id': ['El artículo no tiene una sesión válida.']}},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not are_submission_periods_open(*sessions):
+        return Response(
+            {
+                'code': 'submission_period_closed',
+                'detail': 'El período de submissions de esta sesión está cerrado.',
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
 
 
 def _resolve_user(request):
@@ -41,6 +67,38 @@ def _visible_articles(queryset, request):
 class ArticleViewSet(viewsets.ModelViewSet):
     queryset = Article.objects.all()
     serializer_class = ArticleSerializer
+
+    @action(detail=False, methods=['get'], url_path='submission-status')
+    def submission_status(self, request):
+        raw_session_id = request.query_params.get('session_id')
+        if (
+            not raw_session_id
+            or not raw_session_id.isascii()
+            or not raw_session_id.isdecimal()
+            or len(raw_session_id) > 19
+        ):
+            return Response(
+                {'session_id': ['Se requiere un ID de sesión válido.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        session_id = int(raw_session_id)
+        if not 1 <= session_id <= 9223372036854775807:
+            return Response(
+                {'session_id': ['Se requiere un ID de sesión válido.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = get_object_or_404(
+            Session.objects.select_related('conference'), pk=session_id
+        )
+        period = get_submission_period(session)
+        return Response({
+            'session_id': session.pk,
+            'submission_open': period.is_open(),
+            'submission_start': _iso_utc_or_none(period.start),
+            # This is the exclusive boundary, not the last permitted instant.
+            'submission_deadline': _iso_utc_or_none(period.end_exclusive),
+        })
 
     def get_permissions(self):
         if self.action in _AUTHOR_ONLY_ACTIONS:
@@ -90,6 +148,10 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'data_received': "Data contains files, omitted for debug"
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        period_error = _submission_period_error(serializer.validated_data['session'])
+        if period_error is not None:
+            return period_error
+
         with transaction.atomic():
             self.perform_create(serializer)
             created_article = serializer.instance
@@ -124,6 +186,11 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 'data_received': request.data
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        target_session = serializer.validated_data.get('session', instance.session)
+        period_error = _submission_period_error(instance.session, target_session)
+        if period_error is not None:
+            return period_error
+
         with transaction.atomic():
             self.perform_update(serializer)
 
@@ -152,11 +219,9 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        if date.today() > article.session.deadline:
-            return Response(
-                {'detail': 'El deadline de la sesión ya venció.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        period_error = _submission_period_error(article.session)
+        if period_error is not None:
+            return period_error
 
         errors = ArticleCompletenessValidator(
             title=article.title,
