@@ -3,30 +3,32 @@ from .models import Conference
 from user.models import User
 from datetime import date
 
+
 class ConferenceSerializerGrupo1(serializers.ModelSerializer):
     class Meta:
         model = Conference
         fields = [
-    'submission_start',
-    'submission_end',
-    'review_start',
-    'review_end',
-    'bidding_start',
-    'bidding_end',
-    'id',
-    'title',
-    'description',
-    'start_date',
-    'end_date',
-    'blind_kind',
-    'allowed_extensions',
-    'sources_multiple',
-]
+            "submission_start",
+            "submission_end",
+            "review_start",
+            "review_end",
+            "bidding_start",
+            "bidding_end",
+            "id",
+            "title",
+            "description",
+            "start_date",
+            "end_date",
+            "blind_kind",
+            "allowed_extensions",
+            "sources_multiple",
+        ]
+
 
 class ConferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conference
-        fields = '__all__'
+        fields = "__all__"
 
     def validate_title(self, value):
         # elimina espacios al inicio y final
@@ -36,7 +38,11 @@ class ConferenceSerializer(serializers.ModelSerializer):
         conferencia_id = self.instance.id if self.instance else None
 
         # buscar duplicados sin distinguir mayúsculas/minúsculas
-        if Conference.objects.filter(title__iexact=value).exclude(id=conferencia_id).exists():
+        if (
+            Conference.objects.filter(title__iexact=value)
+            .exclude(id=conferencia_id)
+            .exists()
+        ):
             raise serializers.ValidationError(
                 "Ya existe una conferencia con ese título."
             )
@@ -45,52 +51,71 @@ class ConferenceSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         # normalizar lista final de chairs
-        chairs = data.get('chairs', None)
+        chairs = data.get("chairs", None)
         if chairs is None and self.instance is not None:
             # usar los chairs actuales
             if self.instance.chairs.count() == 0:
-                raise serializers.ValidationError({
-                    "chairs": "Se requiere al menos un chair para crear/editar la conferencia."
-                })
+                raise serializers.ValidationError(
+                    {
+                        "chairs": "Se requiere al menos un chair para crear/editar la conferencia."
+                    }
+                )
         else:
             # creación o edición con 'chairs' explícito
             if not chairs or len(chairs) == 0:
-                raise serializers.ValidationError({
-                    "chairs": "Se requiere al menos un chair para crear/editar la conferencia."
-                })
+                raise serializers.ValidationError(
+                    {
+                        "chairs": "Se requiere al menos un chair para crear/editar la conferencia."
+                    }
+                )
 
         # Validación de fechas
         hoy = date.today()
-        start_date = data.get('start_date')
-        end_date = data.get('end_date')
-        
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+
         # verificacion de que ambas fechas sean a partir de hoy
         if start_date and start_date < hoy:
-            raise serializers.ValidationError({
-                "start_date": "La fecha de inicio debe ser hoy o en el futuro."
-            })
+            raise serializers.ValidationError(
+                {"start_date": "La fecha de inicio debe ser hoy o en el futuro."}
+            )
         if end_date and end_date < hoy:
-            raise serializers.ValidationError({
-                "end_date": "La fecha de fin debe ser hoy o en el futuro."
-            })
+            raise serializers.ValidationError(
+                {"end_date": "La fecha de fin debe ser hoy o en el futuro."}
+            )
         if start_date and end_date and end_date < start_date:
-            raise serializers.ValidationError({
-                "end_date": "La fecha de fin no puede ser anterior a la fecha de inicio."
-            })
+            raise serializers.ValidationError(
+                {
+                    "end_date": "La fecha de fin no puede ser anterior a la fecha de inicio."
+                }
+            )
 
         for start_field, end_field in (
-            ('submission_start', 'submission_end'),
-            ('review_start', 'review_end'),
-            ('bidding_start', 'bidding_end'),
+            ("submission_start", "submission_end"),
+            ("review_start", "review_end"),
+            ("bidding_start", "bidding_end"),
         ):
             start = data.get(start_field, getattr(self.instance, start_field, None))
             end = data.get(end_field, getattr(self.instance, end_field, None))
             if start and end and end < start:
-                raise serializers.ValidationError({
-                    end_field: f"{end_field} no puede ser anterior a {start_field}."
-                })
+                raise serializers.ValidationError(
+                    {end_field: f"{end_field} no puede ser anterior a {start_field}."}
+                )
 
+        review_end = data.get("review_end", getattr(self.instance, "review_end", None))
+        camera_ready_deadline = data.get(
+            "camera_ready_deadline",
+            getattr(self.instance, "camera_ready_deadline", None),
+        )
+        end_date = data.get("end_date", getattr(self.instance, "end_date", None))
+
+        if (review_end and camera_ready_deadline and review_end > camera_ready_deadline):
+            raise serializers.ValidationError({"camera_ready_deadline": "El deadline de camera ready tiene que ser posterior o igual a la fecha de fin de revisión"})
         
+        if (camera_ready_deadline and camera_ready_deadline > end_date):
+            raise serializers.ValidationError({"camera_ready_deadline":"El deadline de camera ready tiene que ser anterior a la fecha de fin"})
+
+
         return data
 
 
@@ -98,7 +123,7 @@ class ConferenceSerializer(serializers.ModelSerializer):
 class ChairSummarySerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'full_name', 'email']
+        fields = ["id", "full_name", "email"]
 
 
 def chairs_summary(obj):
