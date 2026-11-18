@@ -8,6 +8,7 @@ from .api import (
     ReviewedArticlesWithStatusAPI,
     ArticleReviewsAPI,
     ReviewedArticlesAPI,
+    InviteReviewerAPI,
 )
 
 urlpatterns = [
@@ -19,4 +20,5 @@ urlpatterns = [
     path('chair/articles/<int:article_id>/reviews/',ArticleReviewsAPI.as_view(),name='article-reviews'),
     path('selection/session/<int:session_id>/articles/', ReviewedArticlesWithStatusAPI.as_view(), name='reviewed-articles-list'),
     path('chair/articles-reviewed/',ReviewedArticlesAPI.as_view(),name='article-with-reviews'),
+    path('sessions/<int:session_id>/invite/<int:user_id>/', InviteReviewerAPI.as_view(), name='invite_reviewer'),
 ]

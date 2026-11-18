@@ -3,6 +3,7 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.db.models import Avg
 from chair.models import ReviewAssignment 
+from chair.models import ReviewerInvitation
 from conference_session.models import Session
 from reviewer.models import Bid, Review
 from chair.serializers import ReviewAssignmentSerializer
@@ -68,6 +69,28 @@ class DeleteReviewAssignmentAPI(APIView):
         review.save()
         return JsonResponse({'message': 'Reviewer assignment logically deleted'}, status=200)
 
+class InviteReviewerAPI(APIView):
+    def post(self, request, session_id, user_id, *args, **kwargs):
+        try:
+            session = Session.objects.get(id=session_id)
+            user = User.objects.get(id=user_id)
+
+            # get_or_create evita que se envíen invitaciones duplicadas a la misma persona
+            invitation, created = ReviewerInvitation.objects.get_or_create(
+                session=session,
+                user=user,
+                defaults={'status': 'pending'}
+            )
+
+            if not created:
+                return Response({'error': 'El usuario ya tiene una invitación para esta sesión'}, status=400)
+
+            return Response({'message': 'Invitación enviada exitosamente'}, status=201)
+            
+        except Session.DoesNotExist:
+            return Response({'error': 'Sesión no encontrada'}, status=404)
+        except User.DoesNotExist:
+            return Response({'error': 'Usuario no encontrado'}, status=404)
 
 class AvailableReviewersAPI(APIView):
     """
