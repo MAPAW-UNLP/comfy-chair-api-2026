@@ -284,6 +284,69 @@ class ConferenceUsersActionTests(TestCase):
         self.assertEqual(notification.session, session)
 
 
+class ConferencePeriodsTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.chair = User.objects.create(
+            email='period-chair@example.com',
+            full_name='Period Chair',
+            affiliation='MAPAW',
+            role='user',
+        )
+        self.conference = Conference.objects.create(
+            title='Camera Ready Conference',
+            description='Conference periods',
+            start_date=date(2030, 1, 1),
+            end_date=date(2030, 1, 31),
+        )
+        self.conference.chairs.add(self.chair)
+        self.client.force_authenticate(user=self.chair)
+        token = jwt.encode(
+            {
+                'user_id': self.chair.id,
+                'exp': datetime.now(timezone.utc) + timedelta(minutes=5),
+            },
+            settings.SECRET_KEY,
+            algorithm=settings.JWT_ALGORITHM,
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def test_updates_camera_ready_period(self):
+        response = self.client.patch(
+            reverse('conference-detail', kwargs={'pk': self.conference.pk}) + 'periods/',
+            {
+                'camera_ready_start': '2030-01-20',
+                'camera_ready_end': '2030-01-25',
+                'user_id': self.chair.pk,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.conference.refresh_from_db()
+        self.assertEqual(
+            self.conference.camera_ready_start,
+            date(2030, 1, 20),
+        )
+        self.assertEqual(
+            self.conference.camera_ready_end,
+            date(2030, 1, 25),
+        )
+
+    def test_rejects_camera_ready_end_before_start(self):
+        response = self.client.patch(
+            reverse('conference-detail', kwargs={'pk': self.conference.pk}) + 'periods/',
+            {
+                'camera_ready_start': '2030-01-25',
+                'camera_ready_end': '2030-01-20',
+                'user_id': self.chair.pk,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+
 class ConferenceAlphabeticalOrderingTests(TestCase):
     def setUp(self):
         self.client = APIClient()

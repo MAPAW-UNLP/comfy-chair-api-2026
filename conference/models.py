@@ -29,6 +29,8 @@ class Conference (models.Model):
     review_end = models.DateField(null=True, blank=True, default=None)
     bidding_start = models.DateField(null=True, blank=True, default=None)
     bidding_end = models.DateField(null=True, blank=True, default=None)
+    camera_ready_start = models.DateField(null=True, blank=True, default=None)
+    camera_ready_end = models.DateField(null=True, blank=True, default=None)
     # tipo de lectura 
     blind_kind = models.CharField(
         max_length=12,

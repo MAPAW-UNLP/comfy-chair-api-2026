@@ -87,6 +87,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
             'submission_start', 'submission_end',
             'review_start', 'review_end',
             'bidding_start', 'bidding_end',
+            'camera_ready_start', 'camera_ready_end',
         }
         data = {
             field: request.data.get(field)

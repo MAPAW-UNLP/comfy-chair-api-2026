@@ -13,6 +13,8 @@ class ConferenceSerializerGrupo1(serializers.ModelSerializer):
     'review_end',
     'bidding_start',
     'bidding_end',
+    'camera_ready_start',
+    'camera_ready_end',
     'id',
     'title',
     'description',
@@ -82,6 +84,7 @@ class ConferenceSerializer(serializers.ModelSerializer):
             ('submission_start', 'submission_end'),
             ('review_start', 'review_end'),
             ('bidding_start', 'bidding_end'),
+            ('camera_ready_start', 'camera_ready_end'),
         ):
             start = data.get(start_field, getattr(self.instance, start_field, None))
             end = data.get(end_field, getattr(self.instance, end_field, None))
