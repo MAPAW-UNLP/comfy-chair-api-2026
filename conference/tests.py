@@ -409,3 +409,123 @@ class ConferencePeriodsTests(TestCase):
             partial=True,
         )
         self.assertTrue(serializer.is_valid())
+
+    def test_submission_dates(self):
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "submission_start": date.today() + timedelta(weeks=2),
+                "submission_end": date.today() + timedelta(weeks=1),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["submission_end"][0],
+            "submission_end no puede ser anterior a submission_start.",
+        )
+
+    def test_review_dates(self):
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "review_start": date.today() + timedelta(weeks=2),
+                "review_end": date.today() + timedelta(weeks=1),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["review_end"][0],
+            "review_end no puede ser anterior a review_start.",
+        )
+
+    def test_bidding_dates(self):
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "bidding_start": date.today() + timedelta(weeks=2),
+                "bidding_end": date.today() + timedelta(weeks=1),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["bidding_end"][0],
+            "bidding_end no puede ser anterior a bidding_start.",
+        )
+
+    def test_deadline_date(self):
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "review_end": date.today() + timedelta(weeks=2),
+                "camera_ready_deadline": date.today() + timedelta(weeks=1),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["camera_ready_deadline"][0],
+            "El deadline de camera ready tiene que ser posterior o igual a la fecha de fin de revisión",
+        )
+
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "camera_ready_deadline": self.conference.end_date + timedelta(days=1),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["camera_ready_deadline"][0],
+            "El deadline de camera ready tiene que ser anterior a la fecha de fin",
+        )
+
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "review_end": date.today() + timedelta(weeks=2),
+                "camera_ready_deadline": date.today() + timedelta(weeks=3),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "review_end": date.today() + timedelta(weeks=2),
+                "camera_ready_deadline": date.today() + timedelta(weeks=2),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        response = self.client.patch(
+            reverse("conference-update-periods", kwargs={"pk": self.conference.pk}),
+            {
+                "user_id": self.chair_user.id,
+                "review_end": date.today() + timedelta(weeks=2),
+                "camera_ready_deadline": self.conference.end_date,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
