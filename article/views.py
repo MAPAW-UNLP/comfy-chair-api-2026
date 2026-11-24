@@ -7,9 +7,9 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import FileResponse, Http404, HttpResponse
-from article.models import Article, ArticleHistory, Source
+from article.models import Article, ArticleHistory, Source, ArticleFile
 from user.models import User
-from .serializers import ArticleSerializer, ArticleHistorySerializer
+from .serializers import ArticleSerializer, ArticleHistorySerializer, ArticleFileSerializer
 from .permissions import IsArticleAuthor
 from .validators import ArticleCompletenessValidator
 from reviewer.conflicts import is_article_author
@@ -24,6 +24,13 @@ _AUTHOR_ONLY_ACTIONS = (
     "submit",
     "upload_camera_ready_file",
 )
+
+
+def _delete_stored_files(files):
+    # files: lista de (storage, name). Borra los archivos del disco/storage.
+    for storage, name in files:
+        if name:
+            storage.delete(name)
 
 
 def _resolve_user(request):
@@ -297,9 +304,7 @@ class ArticleViewSet(viewsets.ModelViewSet):
         deadline = conference.camera_ready_deadline
         if not deadline or date.today() > deadline:
             return Response(
-                {
-                    "detail": "El deadline es inválido"
-                },
+                {"detail": "El deadline es inválido"},
                 status=400,
             )
         file = request.FILES.get("file")
@@ -311,7 +316,28 @@ class ArticleViewSet(viewsets.ModelViewSet):
                 {"detail": "No se acepta la extensión del archivo"}, status=400
             )
         with transaction.atomic():
+            # --- Reemplazo del camera-ready anterior ---
+            # Cuando se pueda subir más de un archivo camera_ready, sacar todo
+            # este bloque (hasta el on_commit inclusive).
             camera_ready_file = article.files.filter(is_camera_ready=True)
+            old_files = [(f.file.storage, f.file.name) for f in camera_ready_file]
             camera_ready_file.delete()
-            
-
+            # El archivo físico se borra recién cuando la transacción confirma,
+            # así un rollback no deja una fila apuntando a un archivo inexistente.
+            transaction.on_commit(lambda: _delete_stored_files(old_files))
+            # --- Fin del reemplazo ---
+            article_file: ArticleFile = ArticleFile.objects.create(
+                article=article,
+                file=file,
+                filename=file.name,
+                is_camera_ready=True,
+                uploaded_by=request.auth_user,
+            )
+            ArticleHistory.objects.create(
+                event_type="camera_ready_uploaded",
+                metadata={"filename": file.name},
+                article=article,
+                created_by=request.auth_user,
+            )
+        serializer = ArticleFileSerializer(article_file, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

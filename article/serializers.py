@@ -2,15 +2,20 @@ from user.models import User
 from rest_framework import serializers
 from user.serializers import UserSerializer
 from conference_session.models import Session
-from .models import Article, ArticleDeletionRequest, ArticleHistory, Source
+from .models import Article, ArticleDeletionRequest, ArticleFile, ArticleHistory, Source
 from conference_session.serializers import SessionSerializer
 from .validators import ArticleCompletenessValidator
-
 
 class SourceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Source
         fields = ["id", "file_path", "filename"]
+
+
+class ArticleFileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ArticleFile
+        fields = ["id", "article", "filename", "file", "is_camera_ready", "uploaded_at"]
 
 
 class ArticleSerializer(serializers.ModelSerializer):
@@ -47,7 +52,7 @@ class ArticleSerializer(serializers.ModelSerializer):
     camera_ready_deadline = serializers.SerializerMethodField()
 
     def get_camera_ready(self, obj):
-        file = obj.files.filter(is_camera_ready=True).first()
+        file = obj.files.filter(is_camera_ready=True).order_by("-uploaded_at", "-id").first()
         if not file:
             return None
         return {
@@ -227,3 +232,5 @@ class ArticleDeletionRequestSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+    
