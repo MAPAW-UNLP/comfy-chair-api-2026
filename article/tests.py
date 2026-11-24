@@ -9,7 +9,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from article.models import Article, ArticleHistory, Source
+from article.models import Article, ArticleFile, ArticleHistory, Source
 from conference.models import Conference
 from conference_session.models import Session
 from notification.models import Notification
@@ -391,3 +391,131 @@ class UserFullDataConBorradoresTests(ArticleDraftTestCase):
 
         respuesta = self.cliente_de(autor).get("/user/user-full-data/")
         self.assertEqual(respuesta.status_code, 200, respuesta.content)
+
+
+class CameraReadyTests(ArticleDraftTestCase):
+    """POST /api/article/{id}/camera_ready/ y campos nuevos del GET."""
+
+    def crear_aceptado(self, autor=None, deadline="manana", **extra):
+        autor = autor or self.crear_usuario()
+        hoy = date.today()
+        if deadline == "manana":
+            deadline = hoy + timedelta(days=1)
+        conferencia = self.crear_conferencia(
+            camera_ready_deadline=deadline, allowed_extensions=["pdf"]
+        )
+        sesion = self.crear_sesion(conferencia=conferencia)
+        datos = {"title": "Artículo aceptado", "status": "accepted", "session": sesion}
+        datos.update(extra)
+        articulo = Article.objects.create(**datos)
+        articulo.authors.add(autor)
+        return articulo, autor
+
+    def archivo(self, nombre="camera.pdf"):
+        return SimpleUploadedFile(nombre, b"%PDF-1.4 camera", content_type="application/pdf")
+
+    def subir(self, usuario, articulo, archivo="default"):
+        datos = {} if archivo is None else {"file": self.archivo() if archivo == "default" else archivo}
+        return self.cliente_de(usuario).post(
+            f"/api/article/{articulo.id}/camera_ready/", datos, format="multipart"
+        )
+
+    # --- Subida OK ---
+    def test_autor_sube_camera_ready(self):
+        articulo, autor = self.crear_aceptado()
+        respuesta = self.subir(autor, articulo)
+
+        self.assertEqual(respuesta.status_code, 201, respuesta.data)
+        self.assertTrue(respuesta.data["is_camera_ready"])
+        self.assertEqual(respuesta.data["filename"], "camera.pdf")
+        self.assertEqual(respuesta.data["article"], articulo.id)
+
+        archivo = ArticleFile.objects.get(article=articulo, is_camera_ready=True)
+        self.assertEqual(archivo.uploaded_by, autor)
+
+        evento = ArticleHistory.objects.get(article=articulo, event_type="camera_ready_uploaded")
+        self.assertEqual(evento.created_by, autor)
+        self.assertEqual(evento.metadata, {"filename": "camera.pdf"})
+
+        articulo.refresh_from_db()
+        self.assertEqual(articulo.title, "Artículo aceptado")
+
+    def test_resubida_reemplaza_el_anterior(self):
+        articulo, autor = self.crear_aceptado()
+        self.subir(autor, articulo, self.archivo("v1.pdf"))
+        viejo = ArticleFile.objects.get(article=articulo, is_camera_ready=True)
+        storage, nombre_viejo = viejo.file.storage, viejo.file.name
+        self.assertTrue(storage.exists(nombre_viejo))
+
+        # TestCase no confirma transacciones: hay que ejecutar los on_commit a mano.
+        with self.captureOnCommitCallbacks(execute=True):
+            respuesta = self.subir(autor, articulo, self.archivo("v2.pdf"))
+
+        self.assertEqual(respuesta.status_code, 201, respuesta.data)
+        self.assertFalse(storage.exists(nombre_viejo))
+        archivos = ArticleFile.objects.filter(article=articulo, is_camera_ready=True)
+        self.assertEqual(archivos.count(), 1)
+        self.assertEqual(archivos.first().filename, "v2.pdf")
+
+    # --- 400 ---
+    def test_sin_archivo_400(self):
+        articulo, autor = self.crear_aceptado()
+        respuesta = self.subir(autor, articulo, archivo=None)
+        self.assertEqual(respuesta.status_code, 400)
+
+    def test_extension_no_permitida_400(self):
+        articulo, autor = self.crear_aceptado()
+        respuesta = self.subir(autor, articulo, SimpleUploadedFile("camera.docx", b"x"))
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertFalse(ArticleFile.objects.filter(article=articulo).exists())
+
+    def test_deadline_vencido_400(self):
+        articulo, autor = self.crear_aceptado(deadline=date.today() - timedelta(days=1))
+        respuesta = self.subir(autor, articulo)
+        self.assertEqual(respuesta.status_code, 400)
+
+    def test_deadline_null_400(self):
+        articulo, autor = self.crear_aceptado(deadline=None)
+        respuesta = self.subir(autor, articulo)
+        self.assertEqual(respuesta.status_code, 400)
+
+    # --- 409 / 403 / 404 ---
+    def test_articulo_no_aceptado_409(self):
+        articulo, autor = self.crear_aceptado(status="review")
+        respuesta = self.subir(autor, articulo)
+        self.assertEqual(respuesta.status_code, 409)
+
+    def test_no_autor_403(self):
+        articulo, _ = self.crear_aceptado()
+        otro = self.crear_usuario()
+        respuesta = self.subir(otro, articulo)
+        self.assertEqual(respuesta.status_code, 403)
+        self.assertFalse(ArticleFile.objects.filter(article=articulo).exists())
+
+    def test_articulo_inexistente_404(self):
+        autor = self.crear_usuario()
+        respuesta = self.cliente_de(autor).post(
+            "/api/article/999999/camera_ready/", {"file": self.archivo()}, format="multipart"
+        )
+        self.assertEqual(respuesta.status_code, 404)
+
+    # --- GET del artículo ---
+    def test_get_devuelve_camera_ready_y_deadline(self):
+        articulo, autor = self.crear_aceptado()
+        self.subir(autor, articulo)
+
+        respuesta = self.cliente_de(autor).get(f"/api/article/{articulo.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.data["camera_ready"]["filename"], "camera.pdf")
+        self.assertIn("file", respuesta.data["camera_ready"])
+        self.assertEqual(
+            str(respuesta.data["camera_ready_deadline"]),
+            str(date.today() + timedelta(days=1)),
+        )
+
+    def test_get_sin_camera_ready_devuelve_null(self):
+        articulo, autor = self.crear_aceptado(deadline=None)
+        respuesta = self.cliente_de(autor).get(f"/api/article/{articulo.id}/")
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertIsNone(respuesta.data["camera_ready"])
+        self.assertIsNone(respuesta.data["camera_ready_deadline"])

@@ -1,16 +1,16 @@
 from user.models import User
 from django.db import models
-from django.db.models import Avg
 from conference_session.models import Session
+
 
 # Querys personalizadas
 class ArticleQuerySet(models.QuerySet):
 
     def fully_reviewed_by_session(self, session):
-        #Retorna artículos de una sesión con todas sus asignaciones revisadas,
-        #calculando el promedio de puntajes ordenado descendentemente.
+        # Retorna artículos de una sesión con todas sus asignaciones revisadas,
+        # calculando el promedio de puntajes ordenado descendentemente.
         return (
-            self.exclude(status='draft')
+            self.exclude(status="draft")
             .filter(
                 session=session,
                 reviewassignment__reviewed=True,
@@ -20,101 +20,147 @@ class ArticleQuerySet(models.QuerySet):
                 reviewassignment__reviewed=False,
                 reviewassignment__deleted=False,
             )
-            .annotate(avg_score=Avg("review__score"))
+            .annotate(avg_score=models.Avg("review__score"))
             .exclude(avg_score=None)
             .distinct()
             .order_by("-avg_score")
         )
+
 
 # --- Modelo Article --- #
 class Article(models.Model):
 
     # Tipos de Articulos
     ARTICLE_TYPE_CHOICES = [
-        ('regular', 'Regular'),
-        ('poster', 'Poster'),
+        ("regular", "Regular"),
+        ("poster", "Poster"),
     ]
 
     # Estados posibles de un Articulo
     STATUS_CHOICES = [
-        ('draft', 'Borrador'),
-        ('reception', 'Recepción'),
-        ('bidding', 'Bidding'),
-        ('assignment', 'Asignación'),
-        ('review', 'Revisión'),
-        ('selection', 'Selección'),
-        ('accepted', 'Aceptado'),
-        ('rejected', 'Rechazado'),
+        ("draft", "Borrador"),
+        ("reception", "Recepción"),
+        ("bidding", "Bidding"),
+        ("assignment", "Asignación"),
+        ("review", "Revisión"),
+        ("selection", "Selección"),
+        ("accepted", "Aceptado"),
+        ("rejected", "Rechazado"),
     ]
 
     # Atributos
     title = models.CharField(max_length=200)
-    main_file = models.FileField(upload_to='articles/', blank=True, null=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='reception')
-    type = models.CharField(max_length=10, choices=ARTICLE_TYPE_CHOICES, blank=True, null=True)
+    main_file = models.FileField(upload_to="articles/", blank=True, null=True)
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default="reception"
+    )
+    type = models.CharField(
+        max_length=10, choices=ARTICLE_TYPE_CHOICES, blank=True, null=True
+    )
     abstract = models.TextField(max_length=300, blank=True, null=True)
 
-    # Relaciones 
-    authors = models.ManyToManyField(User, related_name='article')
-    corresponding_author = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='notification_article')
-    session = models.ForeignKey(Session, on_delete=models.CASCADE, related_name='article', null=True, blank=True)
+    # Relaciones
+    authors = models.ManyToManyField(User, related_name="article")
+    corresponding_author = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, related_name="notification_article"
+    )
+    session = models.ForeignKey(
+        Session, on_delete=models.CASCADE, related_name="article", null=True, blank=True
+    )
 
     def __str__(self):
         return self.title
-    
+
     objects = ArticleQuerySet.as_manager()
 
 
 class ArticleHistory(models.Model):
 
     EVENT_TYPE_CHOICES = [
-        ('draft_created', 'Borrador creado'),
-        ('submitted', 'Artículo enviado'),
-        ('reviewer_assigned', 'Revisor asignado'),
-        ('review_received', 'Dictamen recibido'),
-        ('final_verdict', 'Veredicto final generado'),
+        ("draft_created", "Borrador creado"),
+        ("submitted", "Artículo enviado"),
+        ("reviewer_assigned", "Revisor asignado"),
+        ("review_received", "Dictamen recibido"),
+        ("final_verdict", "Veredicto final generado"),
+        ("camera_ready_uploaded", "Camera-ready subido"),
     ]
 
     event_type = models.CharField(max_length=40, choices=EVENT_TYPE_CHOICES)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    article = models.ForeignKey(Article, on_delete=models.CASCADE, related_name='history_events')
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='article_history_created')
-    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='article_history_reviews')
+    article = models.ForeignKey(
+        Article, on_delete=models.CASCADE, related_name="history_events"
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="article_history_created",
+    )
+    reviewed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="article_history_reviews",
+    )
 
     class Meta:
-        ordering = ['created_at', 'id']
+        ordering = ["created_at", "id"]
 
     def __str__(self):
         return f"{self.article.title} - {self.event_type} - {self.created_at}"
-    
+
+
 # --- Modelo ArticleDeletionRequest --- #
 class ArticleDeletionRequest(models.Model):
-    
+
     # Estados de la Solicitud
     STATUS_CHOICES = [
-        ('pending', 'Pendiente'),
-        ('accepted', 'Aceptado'),
-        ('rejected', 'Rechazado'),
+        ("pending", "Pendiente"),
+        ("accepted", "Aceptado"),
+        ("rejected", "Rechazado"),
     ]
 
     # Atributos
     description = models.CharField(max_length=300)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     # Relaciones
-    article = models.ForeignKey(Article, on_delete=models.CASCADE, related_name='deletion_requests')
+    article = models.ForeignKey(
+        Article, on_delete=models.CASCADE, related_name="deletion_requests"
+    )
 
     def __str__(self):
         return f"Solicitud de eliminación - {self.article.title} ({self.status})"
 
+
 class Source(models.Model):
-    file_path = models.FileField(upload_to='articles/')
+    file_path = models.FileField(upload_to="articles/")
     filename = models.CharField(max_length=300)
     article = models.ForeignKey(Article, on_delete=models.CASCADE)
 
     def __str__(self):
         return self.filename
+
+
+class ArticleFile(models.Model):
+    article = models.ForeignKey(Article, on_delete=models.CASCADE, related_name="files")
+    file = models.FileField(upload_to="articles/")
+    filename = models.CharField(max_length=300)
+    is_camera_ready = models.BooleanField(default=False)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    uploaded_by = models.ForeignKey(
+        User,
+        blank=True,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_article_files",
+    )
+
+    def __str__(self):
+        return f"Archivo {self.filename} del artículo {self.article.title}"
