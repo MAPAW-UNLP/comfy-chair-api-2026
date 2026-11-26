@@ -11,7 +11,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from article.models import Article, ArticleHistory, Source
+from article.models import Article, ArticleFile, ArticleHistory, Source
 from conference.models import Conference
 from conference_session.models import Session, get_submission_period
 from notification.models import Notification
