@@ -1,4 +1,5 @@
 from django.urls import path
+from .access_views import MyAccessAPI
 
 from .api import (
     AdminRegisterAPI, 
@@ -17,6 +18,7 @@ from .api import (
 )
 
 urlpatterns = [
+    path('access/', MyAccessAPI.as_view(), name='my-access'),
     path("register/", UserRegisterAPI.as_view(), name="register-user"),
     path('register-admin/', AdminRegisterAPI.as_view(), name='register-admin'),
     path("login/", LoginAPI.as_view(), name="login"),

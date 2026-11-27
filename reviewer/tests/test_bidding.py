@@ -10,7 +10,7 @@ from article.models import Article
 from conference.models import Conference
 from conference_session.models import Session
 from notification.models import Notification
-from reviewer.models import Bid
+from reviewer.models import Bid, ReviewerInvitation
 from user.models import User
 
 
@@ -27,9 +27,11 @@ class BidTestCase(TestCase):
 
     def crear_conferencia(self, titulo):
         hoy = date.today()
-        return Conference.objects.create(
+        conference = Conference.objects.create(
             title=titulo, description="-", start_date=hoy, end_date=hoy + timedelta(days=30)
         )
+        ReviewerInvitation.objects.create(reviewer=self.revisor, conference=conference, status='accepted')
+        return conference
 
     def crear_sesion(self, conferencia, titulo):
         return Session.objects.create(
@@ -98,7 +100,7 @@ class BiddingUpsertTests(BidTestCase):
 class BiddingNotificacionTests(BidTestCase):
     def notificaciones(self):
         return list(
-            Notification.objects.filter(user=self.revisor).order_by("id").values_list("title", flat=True)
+            Notification.objects.filter(user=self.revisor, title__startswith='Bidding').order_by("id").values_list("title", flat=True)
         )
 
     def test_crear_y_actualizar_notifican_una_vez_cada_uno(self):
@@ -116,6 +118,7 @@ class BidPropiedadTests(BidTestCase):
     def setUp(self):
         super().setUp()
         self.otro = self.crear_usuario("otro@test.com")
+        ReviewerInvitation.objects.create(reviewer=self.otro, conference=self.conferencia, status='accepted')
 
     def test_post_a_nombre_de_otro_queda_a_nombre_propio(self):
         respuesta = self.cliente(self.otro).post(
@@ -221,8 +224,8 @@ class BidFiltrosTests(BidTestCase):
 
     def test_una_sola_consulta_sin_importar_la_cantidad_de_bids(self):
         cliente = self.cliente(self.revisor)
-        # 1 consulta del middleware (estado del usuario del token) + 1 de los bids
-        with self.assertNumQueries(2):
+        # Middleware, identity, conference membership and bids: constant in list size.
+        with self.assertNumQueries(4):
             cliente.get("/api/bids/", {"conference_id": self.conferencia.id})
 
 

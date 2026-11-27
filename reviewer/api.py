@@ -15,6 +15,8 @@ from conference.models import Conference
 from conference_session.models import Session
 from reviewer.integrations import bidding_window, review_window
 from reviewer.conflicts import AUTHOR_CANNOT_BID_ERROR, AUTHOR_CANNOT_REVIEW_ERROR, is_article_author
+from user.access import IsConferenceReviewer, authenticated_user, require_reviewer
+from reviewer.permissions import OwnReviewPermission, ArticleReviewsPermission
 from reviewer.serializers import (
     ReviewUpdateSerializer,
     ReviewerDetailSerializer,
@@ -60,6 +62,7 @@ class BiddingView(APIView):
         article = serializer.validated_data["article"]
         if is_article_author(uid, article):
             return Response({"error": AUTHOR_CANNOT_BID_ERROR}, status=status.HTTP_403_FORBIDDEN)
+        require_reviewer(request, article.session.conference_id if article.session_id else None)
         bid, created = Bid.objects.update_or_create(
             reviewer_id=uid,
             article=article,
@@ -82,6 +85,7 @@ class BiddingUpdateView(APIView):
             return Response({"error": "No podés modificar un bid ajeno"}, status=status.HTTP_403_FORBIDDEN)
         if is_article_author(bid.reviewer_id, bid.article_id):
             return Response({"error": AUTHOR_CANNOT_BID_ERROR}, status=status.HTTP_403_FORBIDDEN)
+        require_reviewer(request, bid.article.session.conference_id if bid.article.session_id else None)
         serializer = BidUpdateSerializer(bid, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
@@ -91,6 +95,7 @@ class BiddingUpdateView(APIView):
 
 # GET /api/bids?reviewerId=123
 class ReviewerBidsView(APIView):
+    permission_classes = [IsConferenceReviewer]
     def get(self, request):
         uid = getattr(request, "user_id", None)
         reviewer_id = request.GET.get('reviewerId')
@@ -114,6 +119,8 @@ class ReviewerBidsView(APIView):
 # GET /api/reviewers/{id}
 class ReviewerDetailView(APIView):
     def get(self,request,id):
+        if authenticated_user(request).pk != id:
+            return Response({'error': 'No tenés permiso sobre este revisor'}, status=403)
         try:
             # Buscar cualquier usuario por ID, ver si agregar verificacion de roles mas adelante..
             reviewer = User.objects.get(id=id)
@@ -147,9 +154,8 @@ def review_forbidden_reason(reviewer, article):
 class ReviewView(APIView):
     def post(self, request):
         serializer = ReviewSerializer(data = request.data)
-        if serializer.is_valid():
-            data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
-            user_id = getattr(request, "user_id", None)
+        data = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        user_id = getattr(request, "user_id", None)
         if user_id is not None:
             if "reviewer" not in data:
                 data["reviewer"] = user_id
@@ -171,8 +177,9 @@ class ReviewView(APIView):
 #GET /api/review/{articleId}/
 #Devuelve la revisión publicado o en borrador de un artículo
 class ReviewDetailView(APIView):
+    permission_classes = [OwnReviewPermission]
     def get(self, request, articleId):
-        review = Review.objects.filter(article=articleId).first()
+        review = Review.objects.filter(article=articleId, reviewer_id=request.user_id).first()
         if not review:
             return Response(
                {"message":"No existe una revision de ese articulo"},
@@ -186,6 +193,7 @@ class ReviewDetailView(APIView):
 # Devuelve todas las revisiones publicadas de un revisor.
 # Con conference_id, solo las de esa conferencia.
 class ReviewsByReviewerIdView(APIView):
+    permission_classes = [OwnReviewPermission, IsConferenceReviewer]
     def get(self, request, reviewerId):
         try:
             conference_id = _entero_opcional(request.query_params.get("conference_id"), "conference_id")
@@ -209,6 +217,7 @@ class ReviewsByReviewerIdView(APIView):
 # GET /api/reviews/{idReview}/versions/
 #Devuelve todas las versiones de una revisión
 class ReviewVersionsView(APIView):
+    permission_classes = [OwnReviewPermission]
     def get(self, request, idReview):
         review = get_object_or_404(Review, id=idReview)
         user_id = getattr(request, "user_id", None)
@@ -228,6 +237,7 @@ class ReviewVersionsView(APIView):
     
 #PUT /api/reviews/{idReview}/publish/
 class ReviewPublishView(APIView):
+    permission_classes = [OwnReviewPermission]
     def put(self, request, id):
         review = get_object_or_404(Review, id=id)
         user_id = getattr(request, "user_id", None)
@@ -295,6 +305,7 @@ class ReviewPublishView(APIView):
 
 # PUT api/reviews/{idReview}/updateDraft/
 class ReviewUpdateDraftView(APIView):
+    permission_classes = [OwnReviewPermission]
     def put(self, request, id):
         review = get_object_or_404(Review, id=id)
         user_id = getattr(request, "user_id", None)
@@ -322,6 +333,7 @@ class ReviewUpdateDraftView(APIView):
 
 # PUT api/reviews/{idReview}/updatePublished/
 class ReviewUpdatePublishedView(APIView):
+    permission_classes = [OwnReviewPermission]
     def put(self, request, id):
         review = get_object_or_404(Review, id=id)
         user_id = getattr(request, "user_id", None)
@@ -362,6 +374,7 @@ class ReviewUpdatePublishedView(APIView):
 
 # GET /api/article/<int:article_id>/reviews/
 class ReviewsArticleView(APIView):
+    permission_classes = [ArticleReviewsPermission]
     def get(self, request, article_id):
         reviews = Review.objects.filter(article_id=article_id, is_published=True)
         serializer = PublicReviewSerializer(reviews, many=True)
@@ -399,6 +412,7 @@ class ConfidentialArticleReviewsView(APIView):
 
 # GET /api/reviews/{articleId}/{reviewerId}/
 class ReviewByReviewerView(APIView):
+    permission_classes = [OwnReviewPermission]
     def get(self, request, articleId, reviewerId):
         user_id = getattr(request, "user_id", None)
         if user_id is not None and int(reviewerId) != user_id:
@@ -458,6 +472,7 @@ def _calcular_estadisticas(items):
 # Devuelve los artículos asignados al revisor logueado, con el estado de su
 # review y estadísticas, en un solo request. Ambos filtros son opcionales.
 class ReviewerAssignmentsView(APIView):
+    permission_classes = [IsConferenceReviewer]
     def get(self, request):
         # El revisor sale del token, nunca del query ni del body.
         uid = getattr(request, "user_id", None)
@@ -710,6 +725,7 @@ class ReviewerArticleAssignmentView(APIView):
 
 # GET /api/reviewer/sessions/{session_id}/periods/
 class SessionPeriodsView(APIView):
+    permission_classes = [IsConferenceReviewer]
     def get(self, request, session_id):
         if not getattr(request, 'user_id', None):
             return Response({'error': 'Autenticación requerida'}, status=status.HTTP_401_UNAUTHORIZED)

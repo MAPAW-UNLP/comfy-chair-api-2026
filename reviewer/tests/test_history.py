@@ -22,6 +22,7 @@ class ReviewerHistoryFilterTests(ReviewerTestCase):
     def revisar(self, sesion, publicada=True, revisor=None):
         """Crea un artículo en la sesión (o sin sesión) y una review del revisor."""
         articulo = self.crear_articulo(sesion=sesion, con_sesion=False)
+        self.crear_asignacion(revisor or self.revisor, articulo)
         return self.crear_review(revisor or self.revisor, articulo, publicada=publicada)
 
     def ids(self, respuesta):
@@ -83,12 +84,11 @@ class ReviewerHistoryFilterTests(ReviewerTestCase):
 
     # ---------- sin resultados y errores ----------
 
-    def test_conferencia_sin_reviews_del_revisor_responde_404(self):
+    def test_conferencia_sin_rol_del_revisor_responde_403(self):
         self.revisar(self.crear_sesion())
         otra_conferencia = self.crear_conferencia()
         respuesta = self.pedir(conference_id=otra_conferencia.id)
-        self.assertEqual(respuesta.status_code, 404)
-        self.assertIn("message", respuesta.json())
+        self.assertEqual(respuesta.status_code, 403)
 
     def test_conference_id_no_numerico_responde_400(self):
         respuesta = self.pedir(conference_id="abc")

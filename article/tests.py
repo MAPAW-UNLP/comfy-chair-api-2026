@@ -307,10 +307,7 @@ class PermisosBorradorTests(ArticleDraftTestCase):
         respuesta = self.cliente_de(autor).get(f"/api/article/{borrador.id}/")
         self.assertEqual(respuesta.status_code, 200)
 
-    def test_get_de_articulo_que_ya_no_es_draft_lo_puede_ver_cualquiera(self):
-        # Antes de este feature, cualquier autenticado podía ver el detalle de
-        # un artículo ya enviado (chairs, revisores vía GET /api/article/{id}/).
-        # IsArticleAuthor solo debe restringir mientras el artículo es draft.
+    def test_get_de_articulo_enviado_requiere_un_rol_relacionado(self):
         autor = self.crear_usuario()
         otro = self.crear_usuario()
         articulo = self.crear_borrador(autor=autor)
@@ -319,7 +316,7 @@ class PermisosBorradorTests(ArticleDraftTestCase):
         articulo.save()
 
         respuesta = self.cliente_de(otro).get(f"/api/article/{articulo.id}/")
-        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.status_code, 403)
 
 
 class ListadosMuestranBorradorPropioTests(ArticleDraftTestCase):
@@ -342,7 +339,7 @@ class ListadosMuestranBorradorPropioTests(ArticleDraftTestCase):
 
         respuesta_otro = self.cliente_de(otro).get(f"/api/article/getArticlesBySessionId/{sesion.id}/")
         ids_otro = [a["id"] for a in respuesta_otro.data]
-        self.assertIn(completo.id, ids_otro)
+        self.assertNotIn(completo.id, ids_otro)
         self.assertNotIn(borrador.id, ids_otro)
 
     def test_getArticlesByConferenceId_incluye_el_borrador_propio_pero_no_el_ajeno(self):

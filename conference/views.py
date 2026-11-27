@@ -18,6 +18,7 @@ from .serializers import ConferenceDetailSerializer
 from django.utils import timezone
 from .permissions import IsAdmin
 from user.models import User
+from user.access import authenticated_user, require_chair
 
 
 class ConferenceUserRoleSerializer(serializers.Serializer):
@@ -62,21 +63,9 @@ class ConferenceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'], url_path='periods')
     def update_periods(self, request, pk=None):
         conference = self.get_object()
-        user_id = request.data.get('user_id')
-
-        if not user_id:
-            return Response(
-                {'detail': 'Se debe especificar user_id.'},
-                status=403
-            )
-
-        try:
-            user = User.objects.get(pk=user_id)
-        except User.DoesNotExist:
-            return Response({'detail': 'Usuario no encontrado.'}, status=403)
-
+        user = authenticated_user(request)
         is_admin = getattr(user, 'role', '').lower() == 'admin'
-        is_chair = conference.chairs.filter(pk=user_id).exists()
+        is_chair = conference.chairs.filter(pk=user.pk).exists()
         if not is_admin and not is_chair:
             return Response(
                 {'detail': 'El usuario no es Chair de esta conferencia.'},
@@ -101,6 +90,7 @@ class ConferenceViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def users(self, request, pk=None):
         conference = self.get_object()
+        require_chair(request, conference.pk)
         role = request.query_params.get('role', '').strip()
         valid_roles = {
             'conference_chair',

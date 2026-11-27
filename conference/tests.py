@@ -22,7 +22,7 @@ class ConferenceUsersActionTests(TestCase):
             email='requester@example.com',
             full_name='Requester',
             affiliation='MAPAW',
-            role='user',
+            role='admin',
         )
         self.client.force_authenticate(user=requester)
         token = jwt.encode(

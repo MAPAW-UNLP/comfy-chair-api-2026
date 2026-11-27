@@ -2,8 +2,11 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from conference_session.models import Session
 from rest_framework.views import APIView
+from user.access import IsConferenceChair
 
 class LockSelection(APIView):
+    permission_classes = [IsConferenceChair]
+    chair_session_pk = True
     def post(self, request, pk):
         session = get_object_or_404(Session, pk=pk)
 

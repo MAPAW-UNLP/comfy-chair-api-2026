@@ -40,13 +40,9 @@ class ReviewerAssignmentsTests(ReviewerTestCase):
 
     # ---------- lista y filtros ----------
 
-    def test_sin_asignaciones_responde_200_vacio(self):
+    def test_sin_rol_de_revisor_responde_403(self):
         respuesta = self.pedir()
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(respuesta.json()["results"], [])
-        self.assertEqual(respuesta.json()["stats"], {
-            "total": 0, "published": 0, "draft": 0, "pending": 0, "by_session": [],
-        })
+        self.assertEqual(respuesta.status_code, 403)
 
     def test_sin_filtro_devuelve_todas_las_conferencias(self):
         a = self.asignar(self.crear_sesion())
@@ -75,8 +71,7 @@ class ReviewerAssignmentsTests(ReviewerTestCase):
         otra_conferencia = self.crear_conferencia()
         self.asignar(sesion)
         respuesta = self.pedir(conference_id=otra_conferencia.id, session_id=sesion.id)
-        self.assertEqual(respuesta.status_code, 200)
-        self.assertEqual(respuesta.json()["results"], [])
+        self.assertEqual(respuesta.status_code, 403)
 
     def test_no_aparecen_asignaciones_de_otro_revisor(self):
         sesion = self.crear_sesion()

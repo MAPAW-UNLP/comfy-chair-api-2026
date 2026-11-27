@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 from unittest import mock
 
 from django.urls import reverse
+from reviewer.models import ReviewerInvitation
 
 from .base import ReviewerTestCase
 
@@ -19,6 +20,7 @@ class PeriodosDeSesionTests(ReviewerTestCase):
         return reverse("reviewer-session-periods", args=[session_id])
 
     def consultar(self, sesion):
+        ReviewerInvitation.objects.get_or_create(reviewer=self.usuario, conference=sesion.conference, defaults={'status': 'accepted'})
         with mock.patch("reviewer.api.timezone.now", return_value=AHORA):
             respuesta = self.cliente.get(self.url(sesion.id))
         self.assertEqual(respuesta.status_code, 200)
@@ -31,7 +33,7 @@ class PeriodosDeSesionTests(ReviewerTestCase):
     def test_sesion_inexistente_404(self):
         respuesta = self.cliente.get(self.url(999999))
         self.assertEqual(respuesta.status_code, 404)
-        self.assertEqual(respuesta.json(), {"error": "Sesión no encontrada"})
+        self.assertIn('detail', respuesta.json())
 
     def test_sin_fechas_configuradas_ventanas_abiertas(self):
         sesion = self.crear_sesion()

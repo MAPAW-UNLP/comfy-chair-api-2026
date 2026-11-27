@@ -2,7 +2,7 @@ import zipfile
 import io
 from datetime import date
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Count
 from rest_framework import viewsets, status
 from rest_framework.exceptions import NotFound
 from rest_framework.decorators import action
@@ -13,29 +13,18 @@ from user.models import User
 from .serializers import ArticleSerializer, ArticleDeletionRequestSerializer, ArticleHistorySerializer
 from .permissions import IsArticleAuthor
 from .validators import ArticleCompletenessValidator
-
-# Acciones de detalle que solo puede ver/tocar un autor del artículo cuando
-# este está en borrador (ver IsArticleAuthor y get_queryset).
-_AUTHOR_ONLY_ACTIONS = ('retrieve', 'update', 'partial_update', 'submit', 'history')
-
-
-def _resolve_user(request):
-    user = getattr(request, 'auth_user', None)
-    if user is not None:
-        return user
-    user_id = getattr(request, 'user_id', None)
-    return User.objects.filter(pk=user_id).first() if user_id else None
-
+from user.access import authenticated_user, chair_conferences, reviewer_conferences
 
 def _visible_articles(queryset, request):
-    # Un borrador ajeno no se muestra; el propio borrador del usuario
-    # autenticado sí, mezclado con el resto, igual que un artículo en
-    # cualquier otro estado.
-    user = _resolve_user(request)
-    if user is None:
-        return queryset.exclude(status='draft')
+    # Authors see their articles; chairs and reviewers see submitted articles
+    # only in conferences where they hold the corresponding role.
+    user = authenticated_user(request)
+    if user.role == 'admin':
+        return queryset
+    readable_conferences = chair_conferences(user).values('pk').union(reviewer_conferences(user).values('pk'))
     return queryset.filter(
-        Q(authors=user) | Q(corresponding_author=user) | ~Q(status='draft')
+        Q(authors=user) | Q(corresponding_author=user) |
+        (Q(session__conference__in=readable_conferences) & ~Q(status='draft'))
     ).distinct()
 
 # --- Endpoints para el modelo Article ---
@@ -44,18 +33,17 @@ class ArticleViewSet(viewsets.ModelViewSet):
     serializer_class = ArticleSerializer
 
     def get_permissions(self):
-        if self.action in _AUTHOR_ONLY_ACTIONS:
-            return [IsArticleAuthor()]
-        return super().get_permissions()
+        return [IsArticleAuthor()]
 
     def get_queryset(self):
         queryset = super().get_queryset()
 
-        if self.action == 'list' or self.action in _AUTHOR_ONLY_ACTIONS:
-            # Listado general y acciones de detalle: un borrador ajeno no se
-            # ve (404/no aparece); el borrador propio del usuario autenticado
-            # sí, mezclado con el resto, igual que cualquier otro artículo.
+        if self.action == 'list':
             return _visible_articles(queryset, self.request)
+
+        user = authenticated_user(self.request)
+        if self.detail and user.role != 'admin':
+            return queryset.filter(~Q(status='draft') | Q(authors=user) | Q(corresponding_author=user)).distinct()
 
         return queryset
 
@@ -69,6 +57,14 @@ class ArticleViewSet(viewsets.ModelViewSet):
             ) from exc
         events = article.history_events.order_by('created_at', 'id')
         return Response(ArticleHistorySerializer(events, many=True).data)
+
+    @action(detail=False, methods=['get'], url_path='review-counts')
+    def review_counts(self, request):
+        # Authors need counts, not access to the chair's review listing.
+        articles = _visible_articles(self.get_queryset(), request).annotate(
+            review_count=Count('review', filter=Q(review__is_published=True), distinct=True),
+        )
+        return Response(list(articles.values('id', 'review_count')))
 
     #------------------------------------------------------------
     # GRUPO 1 - Endpoint para el alta de un articulo

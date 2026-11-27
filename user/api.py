@@ -24,6 +24,7 @@ from .middleware import ACCOUNT_DISABLED_ERROR
 from .disable import ChairConflictError, disable_user, get_disable_check
 from .chair_requests import ChairRequestError, pending_request_data, request_conference_chair
 from conference_session.models import Session
+from .access import IsConferenceChair, author_articles
 
 class UserRegisterAPI(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -221,10 +222,10 @@ class GetUserFullDataAPI(APIView):
         ).values('score', 'opinion')[:1]
 
         # Artículos donde el usuario es autor
-        authored_articles = Article.objects.filter(authors=usuario).select_related('session__conference')
+        authored_articles = author_articles(usuario).exclude(session=None).select_related('session__conference')
 
         # Artículos asignados al usuario como revisor
-        assigned_reviews = ReviewAssignment.objects.filter(reviewer=usuario).annotate(
+        assigned_reviews = ReviewAssignment.objects.filter(reviewer=usuario, deleted=False).exclude(article__session=None).annotate(
             score=Subquery(reviews_subquery.values('score')),
             opinion=Subquery(reviews_subquery.values('opinion'))
         ).select_related('article__session__conference')
@@ -436,6 +437,7 @@ class UpdateUserPasswordAPI(APIView):
         return JsonResponse({'message': 'Contraseña actualizada correctamente.'}, status=200)
 
 class GetSessionReviewersAPI(APIView):
+    permission_classes = [IsConferenceChair]
 
     def get(self, request, session_id, *args, **kwargs):
         reviewers = User.objects.filter(role="user", deleted=False, is_active=True)

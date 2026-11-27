@@ -1,39 +1,33 @@
-from rest_framework.permissions import BasePermission
-from rest_framework.exceptions import NotAuthenticated
-from user.models import User
+from rest_framework.permissions import BasePermission, SAFE_METHODS
+from user.access import authenticated_user, chair_conferences, reviewer_conferences
 from reviewer.conflicts import is_article_author
 
 
 class IsArticleAuthor(BasePermission):
-    """Solo los autores (authors o corresponding_author) de un BORRADOR pueden
-    verlo, editarlo o enviarlo. Un artículo que ya no es draft sigue visible/
-    editable para cualquier autenticado, como era antes de este feature (lo
-    usan chairs y revisores vía GET /api/article/{id}/ para ver el detalle de
-    artículos ya enviados). Reusa is_article_author (reviewer/conflicts.py)
-    para no duplicar la definición de "quién es autor" de un artículo."""
+    """Author operations require authorship; shared reads require a related role."""
 
     message = "No sos autor de este artículo."
 
-    def _get_authenticated_user(self, request):
-        # request.user_id lo setea JWTAuthenticationMiddleware a partir del
-        # token decodificado: es el usuario real, no un valor enviado por el cliente.
-        user_id = getattr(request, 'user_id', None)
-        if not user_id:
-            return None
-        return User.objects.filter(pk=user_id).first()
-
     def has_permission(self, request, view):
-        user = getattr(request, 'auth_user', None) or self._get_authenticated_user(request)
-        if user is None:
-            raise NotAuthenticated("Usuario no autenticado.")
-        # cachear para no repetir la consulta en has_object_permission
-        request.auth_user = user
+        authenticated_user(request)
         return True
 
     def has_object_permission(self, request, view, obj):
-        if obj.status != 'draft':
+        user = authenticated_user(request)
+        if user.role == 'admin':
             return True
-        user = getattr(request, 'auth_user', None) or self._get_authenticated_user(request)
-        if user is None:
-            raise NotAuthenticated("Usuario no autenticado.")
+        if request.method in SAFE_METHODS and view.action != 'history':
+            return can_read_article(user, obj)
         return is_article_author(user, obj)
+
+
+def can_read_article(user, article):
+    if user.role == 'admin' or is_article_author(user, article):
+        return True
+    if article.status == 'draft' or not article.session_id:
+        return False
+    conference_id = article.session.conference_id
+    return (
+        chair_conferences(user).filter(pk=conference_id).exists() or
+        reviewer_conferences(user).filter(pk=conference_id).exists()
+    )

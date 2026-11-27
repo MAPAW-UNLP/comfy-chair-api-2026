@@ -8,12 +8,20 @@ from conference_session.serializers import SessionDetailSerializer
 
 from article.models import Article
 from article.serializers import ArticleSerializer
+from user.access import IsConferenceChair
+from article.views import _visible_articles
 
 
 class SessionViewSet(viewsets.ModelViewSet):
     queryset = Session.objects.select_related('conference').prefetch_related('chairs', 'conference__chairs')
     serializer_class = SessionDetailSerializer
     permission_classes = [IsAdminOrConferenceChair]
+
+    def get_permissions(self):
+        if self.action == 'articles':
+            self.chair_session_pk = True
+            return [IsConferenceChair()]
+        return super().get_permissions()
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -32,7 +40,7 @@ class SessionViewSet(viewsets.ModelViewSet):
     def articles(self, request, pk=None):
         session = self.get_object()
 
-        articles = Article.objects.filter(session=session)
+        articles = _visible_articles(Article.objects.filter(session=session), request)
 
         serializer = ArticleSerializer(articles, many=True)
 

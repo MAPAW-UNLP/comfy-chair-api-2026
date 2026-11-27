@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission
 from rest_framework.exceptions import PermissionDenied
-from user.models import User
+from user.access import authenticated_user
 
 class IsAdmin(BasePermission):
 
@@ -8,15 +8,7 @@ class IsAdmin(BasePermission):
         if request.method in ('GET', 'HEAD', 'OPTIONS'):
             return True
 
-        user_id = request.query_params.get('user_id') or request.data.get('user_id')
-
-        if not user_id:
-            raise PermissionDenied("Se debe especificar user_id.")
-        
-        try:
-            user = User.objects.get(pk=user_id)
-        except User.DoesNotExist:
-            raise PermissionDenied("Usuario no encontrado.")
+        user = authenticated_user(request)
         
         if getattr(user, 'role', '').lower() != 'admin':
             raise PermissionDenied("Este usuario no posee los permisos necesarios.")

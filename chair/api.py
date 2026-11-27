@@ -13,17 +13,21 @@ from rest_framework.views import APIView
 from django.db.models import Count
 from django.db import transaction
 from .helper import createHistoryEvent
+from user.access import IsConferenceChair, authenticated_user, chair_conferences
 
 class ChairAPI(APIView):
+    permission_classes = [IsConferenceChair]
     def get(self, request):
         return JsonResponse({'message': 'Chair endpoint working!'})
 
 
 class CreateReviewAssignmentAPI(APIView):
+    permission_classes = [IsConferenceChair]
+    chair_article_body = True
     def post(self, request):
         reviewer_id = request.data.get("reviewer")
         article_id = request.data.get("article")
-        actor_id = request.data.get("assigned_by")  # TODO: Deuda técnica - migrar a request.user.id con JWT
+        actor_id = request.user_id
         
         if not reviewer_id or not article_id:
             # Mensaje en español, pero estructura en inglés
@@ -48,6 +52,7 @@ class CreateReviewAssignmentAPI(APIView):
 
 
 class DeleteReviewAssignmentAPI(APIView):
+    permission_classes = [IsConferenceChair]
     def delete(self, request, *args, **kwargs):
         reviewer_id = kwargs.get('reviewer_id')
         article_id = kwargs.get('article_id')
@@ -73,6 +78,8 @@ class AvailableReviewersAPI(APIView):
     """
     Devuelve todos los revisores disponibles y asignados, priorizados según el interés.
     """
+
+    permission_classes = [IsConferenceChair]
 
     def get(self, request, article_id):
         article = get_object_or_404(Article, pk=article_id)
@@ -133,6 +140,7 @@ class AvailableReviewersAPI(APIView):
     
     
 class CutoffSelectionAPI(APIView):
+    permission_classes = [IsConferenceChair]
     def post(self, request, session_id):
         percentage = request.data.get("percentage", 100)
         # Validación de porcentaje
@@ -222,6 +230,8 @@ class ScoreThresholdSelectionAPI(APIView):
     }
     """
 
+    permission_classes = [IsConferenceChair]
+
     def post(self, request, session_id):
         # Obtener el valor de corte (cutoff score)
         cutoff_score = request.data.get("cutoff_score")
@@ -298,6 +308,8 @@ class ArticleReviewsAPI(APIView):
     incluyendo datos del revisor.
     """
 
+    permission_classes = [IsConferenceChair]
+
     def get(self, request, article_id):
         # Verificar si el artículo existe
         article = get_object_or_404(Article, id=article_id)
@@ -346,6 +358,8 @@ class ReviewedArticlesWithStatusAPI(APIView):
     """
     Devuelve la lista de artículos aceptados o rechazados de una sesión
     """
+    permission_classes = [IsConferenceChair]
+
     def get(self, request, session_id):
         # Captura el parámetro status de la URL (ej: ?status=accepted)
         status = request.query_params.get('status') 
@@ -385,6 +399,8 @@ class ReviewedArticlesAPI(APIView):
     """
     Devuelve lista de artículos que tienen al menos una revisión publicada.
     """
+    permission_classes = [IsConferenceChair]
+
     def get(self, request):
         session_id = request.query_params.get("session_id")
 
@@ -394,6 +410,10 @@ class ReviewedArticlesAPI(APIView):
             .annotate(review_count=Count("review"))
             .distinct()
         )
+
+        user = authenticated_user(request)
+        if user.role != 'admin':
+            articles = articles.filter(session__conference__in=chair_conferences(user))
 
         if session_id:
             articles = articles.filter(session_id=session_id)

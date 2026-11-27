@@ -12,6 +12,7 @@ from django.urls import reverse
 
 from chair.models import ReviewAssignment
 from reviewer.integrations import Window
+from reviewer.models import ReviewerInvitation
 
 from .base import ReviewerTestCase
 
@@ -21,6 +22,7 @@ class AsignacionesRegresionTests(ReviewerTestCase):
         super().setUp()
         self.revisor = self.crear_usuario()
         self.conferencia = self.crear_conferencia()
+        ReviewerInvitation.objects.create(reviewer=self.revisor, conference=self.conferencia, status='accepted')
         self.sesion_1 = self.crear_sesion(self.conferencia)
         self.sesion_2 = self.crear_sesion(self.conferencia)
         self.url = reverse("reviewer-assignments")

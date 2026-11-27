@@ -224,7 +224,8 @@ class UserSelectorsTests(UserTestCase):
         super().setUp()
         self.active = self.create_user('active@example.com')
         self.inactive = self.create_user('inactive@example.com', is_active=False)
-        self.authenticate(self.create_user('requester@example.com'))
+        self.requester = self.create_user('requester@example.com')
+        self.authenticate(self.requester)
 
     def emails(self, response):
         return [user['email'] for user in response.json()]
@@ -239,6 +240,7 @@ class UserSelectorsTests(UserTestCase):
         session = Session.objects.create(
             title='Session', deadline=conference.end_date, capacity=10, conference=conference
         )
+        session.chairs.add(self.requester)
         return Article.objects.create(
             title='Article',
             main_file='articles/example.pdf',
@@ -255,7 +257,8 @@ class UserSelectorsTests(UserTestCase):
         self.assertNotIn('inactive@example.com', self.emails(response))
 
     def test_session_reviewers_excludes_inactive_users(self):
-        response = self.client.get(reverse('session-reviewers', args=[1]))
+        article = self.create_article()
+        response = self.client.get(reverse('session-reviewers', args=[article.session_id]))
 
         self.assertIn('active@example.com', self.emails(response))
         self.assertNotIn('inactive@example.com', self.emails(response))

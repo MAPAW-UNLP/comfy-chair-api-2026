@@ -888,6 +888,7 @@ class AuthorConflictTests(ReviewerTestCase):
     def setUp(self):
         super().setUp()
         conference = make_conference('CACIC')
+        conference.chairs.add(self.chair)
         session = Session.objects.create(
             conference=conference, title='Sesión 1', deadline=conference.start_date, capacity=10,
         )
